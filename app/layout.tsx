@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Grassroots AMS",
-  description: "Grassroots football attendance and player management",
+  description: "Grassroots football attendance and player development",
 };
 
 export default function RootLayout({
@@ -31,6 +31,9 @@ export default function RootLayout({
                 </Link>
                 <Link href="/sessions" className="hover:underline">
                   Sessions
+                </Link>
+                <Link href="/development" className="hover:underline">
+                  Development
                 </Link>
               </nav>
             </div>

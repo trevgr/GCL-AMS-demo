@@ -1,6 +1,7 @@
 // app/players/[id]/page.tsx
 import Link from "next/link";
 import { supabase } from "../../../lib/supabaseClient";
+import FeedbackClient from "./FeedbackClient";
 
 type Player = {
   id: number;
@@ -22,6 +23,31 @@ type AttendanceRow = {
     session_date: string;
     session_type: string;
   } | null;
+};
+
+type FeedbackRow = {
+  id: number;
+  created_at: string;
+  ball_control: number;
+  passing: number;
+  shooting: number;
+  fitness: number;
+  attitude: number;
+  coachability: number;
+  positioning: number;
+  speed_agility: number;
+  comments: string | null;
+};
+
+type FeedbackSummary = {
+  avg_ball_control: number | null;
+  avg_passing: number | null;
+  avg_shooting: number | null;
+  avg_fitness: number | null;
+  avg_attitude: number | null;
+  avg_coachability: number | null;
+  avg_positioning: number | null;
+  avg_speed_agility: number | null;
 };
 
 // Deterministic date formatting
@@ -64,7 +90,7 @@ export default async function PlayerDetail(props: {
     );
   }
 
-  // Load teams this player is/was assigned to (with team id)
+  // Load teams this player is/was assigned to
   const { data: assignments, error: assignmentsError } = await supabase
     .from("player_team_assignments")
     .select(
@@ -125,6 +151,75 @@ export default async function PlayerDetail(props: {
     }
   }
 
+  // Load feedback for this player
+  const { data: feedbackRows, error: feedbackError } = await supabase
+    .from("coach_feedback")
+    .select(
+      `
+      id,
+      created_at,
+      ball_control,
+      passing,
+      shooting,
+      fitness,
+      attitude,
+      coachability,
+      positioning,
+      speed_agility,
+      comments
+    `
+    )
+    .eq("player_id", playerId)
+    .order("created_at", { ascending: false });
+
+  if (feedbackError) {
+    console.error("Error loading coach feedback:", feedbackError);
+  }
+
+  const typedFeedback = (feedbackRows ?? []) as FeedbackRow[];
+
+  // Compute averages
+  const summary: FeedbackSummary = {
+    avg_ball_control: null,
+    avg_passing: null,
+    avg_shooting: null,
+    avg_fitness: null,
+    avg_attitude: null,
+    avg_coachability: null,
+    avg_positioning: null,
+    avg_speed_agility: null,
+  };
+
+  if (typedFeedback.length > 0) {
+    const n = typedFeedback.length;
+    summary.avg_ball_control =
+      typedFeedback.reduce((sum, f) => sum + f.ball_control, 0) / n;
+    summary.avg_passing =
+      typedFeedback.reduce((sum, f) => sum + f.passing, 0) / n;
+    summary.avg_shooting =
+      typedFeedback.reduce((sum, f) => sum + f.shooting, 0) / n;
+    summary.avg_fitness =
+      typedFeedback.reduce((sum, f) => sum + f.fitness, 0) / n;
+    summary.avg_attitude =
+      typedFeedback.reduce((sum, f) => sum + f.attitude, 0) / n;
+    summary.avg_coachability =
+      typedFeedback.reduce((sum, f) => sum + f.coachability, 0) / n;
+    summary.avg_positioning =
+      typedFeedback.reduce((sum, f) => sum + f.positioning, 0) / n;
+    summary.avg_speed_agility =
+      typedFeedback.reduce((sum, f) => sum + f.speed_agility, 0) / n;
+
+    // Round to 1 decimal for display
+    (Object.keys(summary) as (keyof FeedbackSummary)[]).forEach((k) => {
+      const v = summary[k];
+      if (typeof v === "number") {
+        summary[k] = Math.round(v * 10) / 10;
+      }
+    });
+  }
+
+  const recentFeedback = typedFeedback.slice(0, 5);
+
   return (
     <main className="min-h-screen space-y-6">
       <section>
@@ -150,6 +245,13 @@ export default async function PlayerDetail(props: {
           </p>
         )}
       </section>
+
+      {/* NEW: coach feedback */}
+      <FeedbackClient
+        playerId={playerId}
+        summary={summary}
+        recent={recentFeedback}
+      />
 
       <section>
         <h2 className="text-xl font-semibold mb-2">Teams</h2>
