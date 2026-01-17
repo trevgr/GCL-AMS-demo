@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
 
+export const dynamic = "force-dynamic";
+
 type SessionRow = {
   id: number;
   team_id: number;
