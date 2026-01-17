@@ -52,14 +52,14 @@ export default function FeedbackClient({ playerId, summary, recent }: Props) {
   const router = useRouter();
 
   const [ratings, setRatings] = useState<Record<CategoryKey, number>>({
-    ball_control: 3,
-    passing: 3,
-    shooting: 3,
-    fitness: 3,
-    attitude: 3,
-    coachability: 3,
-    positioning: 3,
-    speed_agility: 3,
+    ball_control: 1,
+    passing: 1,
+    shooting: 1,
+    fitness: 1,
+    attitude: 1,
+    coachability: 1,
+    positioning: 1,
+    speed_agility: 1,
   });
 
   const [comments, setComments] = useState("");

@@ -284,7 +284,7 @@ export default async function TeamDetail(props: {
                       href={`/sessions/${s.id}?view=attendance`}
                       className="text-sm text-blue-600 hover:underline"
                     >
-                      Attendance →
+                      Session Details →
                     </Link>
                   </li>
                 ))}
