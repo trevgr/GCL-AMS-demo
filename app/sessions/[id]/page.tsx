@@ -2,6 +2,8 @@
 import { supabase } from "../../../lib/supabaseClient";
 import AttendanceClient from "./AttendanceClient";
 
+export const dynamic = "force-dynamic";
+
 type Team = {
   id: number;
   name: string;
@@ -9,12 +11,13 @@ type Team = {
   season: string;
 };
 
-type Session = {
+type SessionRow = {
   id: number;
   team_id: number;
   session_date: string;
   session_type: string;
   theme: string | null;
+  team: Team | null;
 };
 
 type Player = {
@@ -24,15 +27,35 @@ type Player = {
   active: boolean;
 };
 
-type AttendanceRecord = {
+type AttendanceRow = {
   player_id: number;
   status: "present" | "absent";
 };
 
+type FeedbackRow = {
+  player_id: number;
+  ball_control: number;
+  passing: number;
+  shooting: number;
+  fitness: number;
+  attitude: number;
+  coachability: number;
+  positioning: number;
+  speed_agility: number;
+  comments: string | null;
+};
+
+function formatDateDDMMYYYY(iso: string) {
+  const d = new Date(iso);
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 export default async function SessionAttendancePage(props: {
   params: Promise<{ id: string }>;
 }) {
-  // Next 16: params is a Promise in async components
   const { id } = await props.params;
   const sessionId = Number(id);
 
@@ -45,12 +68,26 @@ export default async function SessionAttendancePage(props: {
     );
   }
 
-  // Load session with basic fields
+  // Load session + team
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("*")
+    .select(
+      `
+      id,
+      team_id,
+      session_date,
+      session_type,
+      theme,
+      team:teams (
+        id,
+        name,
+        age_group,
+        season
+      )
+    `
+    )
     .eq("id", sessionId)
-    .single<Session>();
+    .single<SessionRow>();
 
   if (sessionError || !session) {
     console.error("Error loading session:", sessionError);
@@ -61,18 +98,7 @@ export default async function SessionAttendancePage(props: {
     );
   }
 
-  // Load team info for context
-  const { data: team, error: teamError } = await supabase
-    .from("teams")
-    .select("*")
-    .eq("id", session.team_id)
-    .single<Team>();
-
-  if (teamError || !team) {
-    console.error("Error loading team:", teamError);
-  }
-
-  // Load players assigned to this team
+  // Load players in this team
   const { data: assignments, error: playersError } = await supabase
     .from("player_team_assignments")
     .select(
@@ -94,8 +120,8 @@ export default async function SessionAttendancePage(props: {
   const players: Player[] =
     assignments?.map((row: any) => row.player).filter(Boolean) ?? [];
 
-  // Load existing attendance for this session
-  const { data: attendance, error: attendanceError } = await supabase
+  // Load attendance for this session
+  const { data: attendanceRows, error: attendanceError } = await supabase
     .from("attendance")
     .select("player_id, status")
     .eq("session_id", sessionId);
@@ -104,29 +130,53 @@ export default async function SessionAttendancePage(props: {
     console.error("Error loading attendance:", attendanceError);
   }
 
-  const initialAttendance: AttendanceRecord[] =
-    (attendance as AttendanceRecord[]) ?? [];
+  const attendance = (attendanceRows ?? []) as AttendanceRow[];
+
+  // Load feedback for this session
+  const { data: feedbackRows, error: feedbackError } = await supabase
+    .from("coach_feedback")
+    .select(
+      `
+      player_id,
+      ball_control,
+      passing,
+      shooting,
+      fitness,
+      attitude,
+      coachability,
+      positioning,
+      speed_agility,
+      comments
+    `
+    )
+    .eq("session_id", sessionId);
+
+  if (feedbackError) {
+    console.error("Error loading feedback for session:", feedbackError);
+  }
+
+  const feedback = (feedbackRows ?? []) as FeedbackRow[];
 
   return (
-    <main className="min-h-screen p-4 space-y-4">
+    <main className="min-h-screen space-y-4">
       <section>
         <h1 className="text-2xl font-bold mb-1">
-          {team ? team.name : "Session"}
+          {session.team?.name ?? "Session"}
         </h1>
-        <p className="text-gray-600">
-          {team ? `${team.age_group} · ${team.season}` : ""}
-        </p>
-        <p className="text-gray-600">
-          {new Date(session.session_date).toLocaleDateString()} ·{" "}
+        <p className="text-gray-600 text-sm">
+          {formatDateDDMMYYYY(session.session_date)} ·{" "}
           {session.session_type}
-          {session.theme ? ` · ${session.theme}` : ""}
         </p>
+        {session.theme && (
+          <p className="text-gray-600 text-sm">Theme: {session.theme}</p>
+        )}
       </section>
 
       <AttendanceClient
         sessionId={sessionId}
         players={players}
-        initialAttendance={initialAttendance}
+        initialAttendance={attendance}
+        initialFeedback={feedback}
       />
     </main>
   );
