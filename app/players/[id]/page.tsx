@@ -1,0 +1,178 @@
+// app/players/[id]/page.tsx
+import Link from "next/link";
+import { supabase } from "../../../lib/supabaseClient";
+
+type Player = {
+  id: number;
+  name: string;
+  dob: string;
+  active: boolean;
+};
+
+type TeamAssignment = {
+  team_id: number;
+  team_name: string;
+  age_group: string;
+  season: string;
+};
+
+type AttendanceRow = {
+  status: "present" | "absent";
+  session: {
+    session_date: string;
+    session_type: string;
+  } | null;
+};
+
+// Deterministic date formatting
+function formatDateDDMMYYYY(iso: string) {
+  const d = new Date(iso);
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+export default async function PlayerDetail(props: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await props.params;
+  const playerId = Number(id);
+
+  if (Number.isNaN(playerId)) {
+    console.error("Invalid player id:", id);
+    return (
+      <main className="min-h-screen p-4">
+        <h1 className="text-2xl font-bold mb-4">Invalid player ID</h1>
+      </main>
+    );
+  }
+
+  // Load player
+  const { data: player, error: playerError } = await supabase
+    .from("players")
+    .select("*")
+    .eq("id", playerId)
+    .single<Player>();
+
+  if (playerError || !player) {
+    console.error(playerError);
+    return (
+      <main className="min-h-screen p-4">
+        <h1 className="text-2xl font-bold mb-4">Player not found</h1>
+      </main>
+    );
+  }
+
+  // Load teams this player is/was assigned to (with team id)
+  const { data: assignments, error: assignmentsError } = await supabase
+    .from("player_team_assignments")
+    .select(
+      `
+      team:teams (
+        id,
+        name,
+        age_group,
+        season
+      )
+    `
+    )
+    .eq("player_id", playerId);
+
+  if (assignmentsError) {
+    console.error(assignmentsError);
+  }
+
+  const teams: TeamAssignment[] =
+    assignments
+      ?.map((row: any) => ({
+        team_id: row.team?.id,
+        team_name: row.team?.name,
+        age_group: row.team?.age_group,
+        season: row.team?.season,
+      }))
+      .filter((t) => t.team_id != null) ?? [];
+
+  // Load attendance for this player, joined with sessions
+  const { data: attendanceRows, error: attendanceError } = await supabase
+    .from("attendance")
+    .select(
+      `
+      status,
+      session:sessions (
+        session_date,
+        session_type
+      )
+    `
+    )
+    .eq("player_id", playerId);
+
+  if (attendanceError) {
+    console.error("Error loading attendance for player:", attendanceError);
+  }
+
+  const typedAttendance = (attendanceRows ?? []) as AttendanceRow[];
+
+  let trainingSessions = 0;
+  let trainingAttended = 0;
+
+  for (const row of typedAttendance) {
+    if (row.session && row.session.session_type === "training") {
+      trainingSessions += 1;
+      if (row.status === "present") {
+        trainingAttended += 1;
+      }
+    }
+  }
+
+  return (
+    <main className="min-h-screen space-y-6">
+      <section>
+        <h1 className="text-2xl font-bold mb-2">{player.name}</h1>
+        <p className="text-gray-600 mb-1">
+          Date of birth: {formatDateDDMMYYYY(player.dob)}
+        </p>
+        <p className="text-gray-600">
+          Status: {player.active ? "Active" : "Inactive"}
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-xl font-semibold mb-2">Attendance summary</h2>
+        {trainingSessions === 0 ? (
+          <p>No training sessions recorded yet.</p>
+        ) : (
+          <p>
+            Training sessions attended:{" "}
+            <span className="font-semibold">
+              {trainingAttended} / {trainingSessions}
+            </span>
+          </p>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-xl font-semibold mb-2">Teams</h2>
+        {teams.length === 0 ? (
+          <p>No team assignments yet.</p>
+        ) : (
+          <ul className="space-y-1">
+            {teams.map((t) => (
+              <li key={t.team_id} className="border rounded px-3 py-2">
+                <Link
+                  href={`/teams/${t.team_id}`}
+                  className="block hover:bg-slate-50"
+                >
+                  <div className="font-medium">{t.team_name}</div>
+                  <div className="text-sm text-gray-600">
+                    {t.age_group} · {t.season}
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </main>
+  );
+}
