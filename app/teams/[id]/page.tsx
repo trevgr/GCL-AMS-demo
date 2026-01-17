@@ -2,6 +2,8 @@
 import Link from "next/link";
 import { supabase } from "../../../lib/supabaseClient";
 
+export const dynamic = "force-dynamic";
+
 type Team = {
   id: number;
   name: string;
@@ -33,7 +35,6 @@ type AttendanceRow = {
   } | null;
 };
 
-// Deterministic date formatting
 function formatDateDDMMYYYY(iso: string) {
   const d = new Date(iso);
   const day = String(d.getDate()).padStart(2, "0");
@@ -44,10 +45,14 @@ function formatDateDDMMYYYY(iso: string) {
 
 export default async function TeamDetail(props: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ view?: string }>;
 }) {
-  // Next.js 16: params is a Promise in async components
   const { id } = await props.params;
+  const { view } = await props.searchParams;
   const teamId = Number(id);
+
+  const activeTab: "players" | "sessions" =
+    view === "sessions" ? "sessions" : "players";
 
   if (Number.isNaN(teamId)) {
     console.error("Invalid team id:", id);
@@ -107,7 +112,9 @@ export default async function TeamDetail(props: {
     console.error("Error loading sessions for team:", sessionsError);
   }
 
-  // Load attendance for all players, joined with sessions (to know team + type)
+  const typedSessions = (sessions ?? []) as Session[];
+
+  // Load attendance for all players, joined with sessions to filter by team
   const { data: attendanceRows, error: attendanceError } = await supabase
     .from("attendance")
     .select(
@@ -122,10 +129,7 @@ export default async function TeamDetail(props: {
     );
 
   if (attendanceError) {
-    console.error(
-      "Error loading attendance for team players:",
-      attendanceError
-    );
+    console.error("Error loading attendance for team players:", attendanceError);
   }
 
   const typedAttendance = (attendanceRows ?? []) as AttendanceRow[];
@@ -159,7 +163,8 @@ export default async function TeamDetail(props: {
   }
 
   return (
-    <main className="min-h-screen space-y-6">
+    <main className="min-h-screen space-y-4">
+      {/* Team header */}
       <section>
         <h1 className="text-2xl font-bold mb-1">{team.name}</h1>
         <p className="text-gray-600">
@@ -170,94 +175,122 @@ export default async function TeamDetail(props: {
         )}
       </section>
 
+      {/* Tabs */}
       <section>
-        <h2 className="text-xl font-semibold mb-2">Players</h2>
-        {players.length === 0 ? (
-          <p>No players assigned to this team.</p>
-        ) : (
-          <ul className="space-y-2">
-            {players.map((p) => {
-              const stats =
-                attendanceByPlayer.get(p.id) ?? {
-                  trainingSessions: 0,
-                  trainingAttended: 0,
-                };
+        <div className="flex gap-2 text-sm mb-3">
+          <Link
+            href={`/teams/${teamId}?view=players`}
+            className={`px-3 py-1 rounded border ${
+              activeTab === "players"
+                ? "bg-slate-900 text-white border-slate-900"
+                : "bg-white text-slate-800 border-slate-300"
+            }`}
+          >
+            Players
+          </Link>
+          <Link
+            href={`/teams/${teamId}?view=sessions`}
+            className={`px-3 py-1 rounded border ${
+              activeTab === "sessions"
+                ? "bg-slate-900 text-white border-slate-900"
+                : "bg-white text-slate-800 border-slate-300"
+            }`}
+          >
+            Sessions
+          </Link>
+        </div>
 
-              return (
-                <li
-                  key={p.id}
-                  className="border rounded px-3 py-2 hover:bg-slate-50"
-                >
-                  <Link href={`/players/${p.id}`} className="block">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <div className="font-medium">{p.name}</div>
-                        <div className="text-sm text-gray-600">
-                          DOB: {formatDateDDMMYYYY(p.dob)}
-                        </div>
-                        <div className="text-sm text-gray-600">
-                          Status: {p.active ? "Active" : "Inactive"}
-                        </div>
-                      </div>
-                      {!p.active && (
-                        <span className="text-xs px-2 py-1 rounded bg-gray-200">
-                          Inactive
-                        </span>
-                      )}
-                    </div>
+        {/* Players tab */}
+        {activeTab === "players" && (
+          <section>
+            {players.length === 0 ? (
+              <p>No players assigned to this team.</p>
+            ) : (
+              <ul className="space-y-2">
+                {players.map((p) => {
+                  const stats =
+                    attendanceByPlayer.get(p.id) ?? {
+                      trainingSessions: 0,
+                      trainingAttended: 0,
+                    };
 
-                    <div className="mt-1 text-xs text-gray-500">
-                      {stats.trainingSessions === 0 ? (
-                        <>No training sessions recorded yet.</>
-                      ) : (
-                        <>
-                          Training attended:{" "}
-                          <span className="font-semibold">
-                            {stats.trainingAttended} /{" "}
-                            {stats.trainingSessions}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+                  return (
+                    <li
+                      key={p.id}
+                      className="border rounded px-3 py-2 hover:bg-slate-50"
+                    >
+                      <Link href={`/players/${p.id}`} className="block">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <div className="font-medium">{p.name}</div>
+                            <div className="text-sm text-gray-600">
+                              DOB: {formatDateDDMMYYYY(p.dob)}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              Status: {p.active ? "Active" : "Inactive"}
+                            </div>
+                          </div>
+                          {!p.active && (
+                            <span className="text-xs px-2 py-1 rounded bg-gray-200">
+                              Inactive
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-1 text-xs text-gray-500">
+                          {stats.trainingSessions === 0 ? (
+                            <>No training sessions recorded yet.</>
+                          ) : (
+                            <>
+                              Training attended:{" "}
+                              <span className="font-semibold">
+                                {stats.trainingAttended} /{" "}
+                                {stats.trainingSessions}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
         )}
-      </section>
 
-      <section>
-        <h2 className="text-xl font-semibold mb-2">Sessions</h2>
-        {sessions && sessions.length > 0 ? (
-          <ul className="space-y-2">
-            {sessions.map((s: Session) => (
-              <li
-                key={s.id}
-                className="border rounded px-3 py-2 flex justify-between items-center"
-              >
-                <div>
-                  <div className="font-medium">
-                    {formatDateDDMMYYYY(s.session_date)} ·{" "}
-                    {s.session_type}
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    {s.theme ? `Theme: ${s.theme}` : ""}
-                  </div>
-                </div>
-                <span>
-                  <Link
-                    href={`/sessions/${s.id}`}
-                    className="text-sm text-blue-600 hover:underline"
+        {/* Sessions tab */}
+        {activeTab === "sessions" && (
+          <section>
+            {typedSessions.length === 0 ? (
+              <p>No sessions for this team yet.</p>
+            ) : (
+              <ul className="space-y-2 mt-2">
+                {typedSessions.map((s) => (
+                  <li
+                    key={s.id}
+                    className="border rounded px-3 py-2 flex justify-between items-center bg-white"
                   >
-                    Attendance →
-                  </Link>
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No sessions for this team yet.</p>
+                    <div>
+                      <div className="font-medium">
+                        {formatDateDDMMYYYY(s.session_date)} ·{" "}
+                        {s.session_type}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {s.theme ? `Theme: ${s.theme}` : ""}
+                      </div>
+                    </div>
+                    <Link
+                      href={`/sessions/${s.id}?view=attendance`}
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      Attendance →
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         )}
       </section>
     </main>

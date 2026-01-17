@@ -1,4 +1,5 @@
 // app/calendar/page.tsx
+import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
 
 export const dynamic = "force-dynamic";
@@ -17,16 +18,14 @@ type SessionRow = {
 
 function formatDateLong(iso: string) {
   const d = new Date(iso);
-  const day = d.toLocaleDateString("en-GB", {
+  return d.toLocaleDateString("en-GB", {
     weekday: "short",
     day: "2-digit",
     month: "short",
-  });
-  return day; // e.g. "Wed, 21 Jan"
+  }); // e.g. "Wed, 21 Jan"
 }
 
 export default async function CalendarPage() {
-  // Fetch upcoming and recent sessions (last week + next month)
   const { data, error } = await supabase
     .from("sessions")
     .select(
@@ -65,22 +64,49 @@ export default async function CalendarPage() {
     byDate.set(key, list);
   }
 
-  const sortedDates = Array.from(byDate.keys()).sort();
+  const allDates = Array.from(byDate.keys());
 
-  return (
-    <main className="min-h-screen space-y-4">
-      <section>
-        <h1 className="text-2xl font-bold mb-2">Calendar</h1>
-        <p className="text-sm text-gray-600">
-          Upcoming and recent sessions by date.
-        </p>
-      </section>
+  // Work out this week (Mon–Sun)
+  const now = new Date();
+  const today = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+  const dayOfWeek = today.getDay(); // 0 = Sun, 1 = Mon, ...
+  const diffToMonday = (dayOfWeek + 6) % 7;
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate() - diffToMonday);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
 
-      {sortedDates.length === 0 ? (
-        <p>No sessions scheduled.</p>
-      ) : (
+  const thisWeekDates: string[] = [];
+  const upcomingDates: string[] = [];
+  const pastDates: string[] = [];
+
+  for (const dateStr of allDates) {
+    const d = new Date(dateStr + "T00:00:00");
+    if (d >= weekStart && d <= weekEnd) {
+      thisWeekDates.push(dateStr);
+    } else if (d > weekEnd) {
+      upcomingDates.push(dateStr);
+    } else {
+      pastDates.push(dateStr);
+    }
+  }
+
+  thisWeekDates.sort();
+  upcomingDates.sort();
+  pastDates.sort().reverse();
+
+  const renderDateBlock = (label: string, dates: string[]) => {
+    if (dates.length === 0) return null;
+
+    return (
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">{label}</h2>
         <ul className="space-y-3">
-          {sortedDates.map((date) => {
+          {dates.map((date) => {
             const daySessions = byDate.get(date)!;
             return (
               <li key={date} className="border rounded px-3 py-2 bg-white">
@@ -90,15 +116,20 @@ export default async function CalendarPage() {
                 <ul className="space-y-1 text-sm">
                   {daySessions.map((s) => (
                     <li key={s.id}>
-                      <span className="font-medium">
-                        {s.team?.name ?? "Team"} – {s.session_type}
-                      </span>
-                      {s.theme && (
-                        <span className="text-gray-600">
-                          {" "}
-                          · {s.theme}
+                      <Link
+                        href={`/sessions/${s.id}?view=attendance`}
+                        className="hover:underline"
+                      >
+                        <span className="font-medium">
+                          {s.team?.name ?? "Team"} – {s.session_type}
                         </span>
-                      )}
+                        {s.theme && (
+                          <span className="text-gray-600">
+                            {" "}
+                            · {s.theme}
+                          </span>
+                        )}
+                      </Link>
                     </li>
                   ))}
                 </ul>
@@ -106,6 +137,30 @@ export default async function CalendarPage() {
             );
           })}
         </ul>
+      </section>
+    );
+  };
+
+  return (
+    <main className="min-h-screen space-y-4">
+      <section>
+        <h1 className="text-2xl font-bold mb-2">Calendar</h1>
+        <p className="text-sm text-gray-600">
+          This week first, then upcoming sessions by date.
+        </p>
+      </section>
+
+      {thisWeekDates.length === 0 &&
+      upcomingDates.length === 0 &&
+      pastDates.length === 0 ? (
+        <p>No sessions scheduled.</p>
+      ) : (
+        <div className="space-y-6">
+          {renderDateBlock("This week", thisWeekDates)}
+          {renderDateBlock("Upcoming", upcomingDates)}
+          {/* Uncomment for past if needed */}
+          {/* {renderDateBlock("Past sessions", pastDates)} */}
+        </div>
       )}
     </main>
   );

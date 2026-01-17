@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 
 type Status = "present" | "absent";
@@ -72,6 +73,12 @@ export default function AttendanceClient({
   initialAttendance,
   initialFeedback,
 }: Props) {
+  const searchParams = useSearchParams();
+  const initialViewParam = searchParams.get("view");
+  const [view, setView] = useState<"attendance" | "development">(
+    initialViewParam === "development" ? "development" : "attendance"
+  );
+
   // Attendance state
   const [attendance, setAttendance] = useState<
     Record<number, Status | null>
@@ -132,16 +139,6 @@ export default function AttendanceClient({
     }
     return map;
   });
-
-  const [openFeedback, setOpenFeedback] = useState<Record<number, boolean>>(
-    () => {
-      const map: Record<number, boolean> = {};
-      for (const p of players) {
-        map[p.id] = false;
-      }
-      return map;
-    }
-  );
 
   const [savingAttendanceId, setSavingAttendanceId] = useState<
     number | null
@@ -239,7 +236,35 @@ export default function AttendanceClient({
 
   return (
     <section className="space-y-3">
-      <h2 className="text-xl font-semibold">Attendance & development</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold">Session details</h2>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-2 text-sm">
+        <button
+          type="button"
+          onClick={() => setView("attendance")}
+          className={`px-3 py-1 rounded border ${
+            view === "attendance"
+              ? "bg-slate-900 text-white border-slate-900"
+              : "bg-white text-slate-800 border-slate-300"
+          }`}
+        >
+          Attendance
+        </button>
+        <button
+          type="button"
+          onClick={() => setView("development")}
+          className={`px-3 py-1 rounded border ${
+            view === "development"
+              ? "bg-slate-900 text-white border-slate-900"
+              : "bg-white text-slate-800 border-slate-300"
+          }`}
+        >
+          Player development
+        </button>
+      </div>
 
       {error && (
         <p className="text-sm text-red-600">{error}</p>
@@ -274,7 +299,9 @@ export default function AttendanceClient({
                     <div className="flex gap-2">
                       <button
                         type="button"
-                        onClick={() => handleSetStatus(p.id, "present")}
+                        onClick={() =>
+                          handleSetStatus(p.id, "present")
+                        }
                         disabled={savingAttendanceId === p.id}
                         className={`px-3 py-1 rounded border text-xs ${
                           status === "present"
@@ -286,7 +313,9 @@ export default function AttendanceClient({
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleSetStatus(p.id, "absent")}
+                        onClick={() =>
+                          handleSetStatus(p.id, "absent")
+                        }
                         disabled={savingAttendanceId === p.id}
                         className={`px-3 py-1 rounded border text-xs ${
                           status === "absent"
@@ -297,24 +326,11 @@ export default function AttendanceClient({
                         Absent
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setOpenFeedback((prev) => ({
-                          ...prev,
-                          [p.id]: !prev[p.id],
-                        }))
-                      }
-                      className="text-xs text-blue-600 hover:underline"
-                    >
-                      {openFeedback[p.id]
-                        ? "Hide feedback"
-                        : "Add / edit feedback"}
-                    </button>
                   </div>
                 </div>
 
-                {openFeedback[p.id] && f && (
+                {/* Player development view */}
+                {view === "development" && f && (
                   <div className="mt-3 border-t pt-2 text-sm">
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       {categories.map((cat) => (
@@ -353,7 +369,10 @@ export default function AttendanceClient({
                           rows={2}
                           value={f.comments}
                           onChange={(e) =>
-                            handleFeedbackComments(p.id, e.target.value)
+                            handleFeedbackComments(
+                              p.id,
+                              e.target.value
+                            )
                           }
                           className="border rounded px-2 py-1 w-full"
                           placeholder="Notes specific to this session…"

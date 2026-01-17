@@ -89,7 +89,7 @@ export default function AuthShell({ children }: Props) {
       <header className="border-b bg-slate-900 text-white">
         <div className="max-w-xl mx-auto flex items-center justify-between px-4 py-3">
           <Link href="/" className="font-semibold text-base text-white">
-            Grassroots AMS
+            GCL
           </Link>
           <nav className="flex items-center gap-4 text-sm">
             <Link href="/teams" className="hover:underline text-white">
@@ -98,11 +98,8 @@ export default function AuthShell({ children }: Props) {
             <Link href="/calendar" className="hover:underline text-white">
               Calendar
             </Link>
-            <Link href="/sessions" className="hover:underline text-white">
-              Sessions
-            </Link>
-            <Link href="/development" className="hover:underline text-white">
-              Development
+            <Link href="/reports" className="hover:underline text-white">
+              Reports
             </Link>
             <button
               type="button"
