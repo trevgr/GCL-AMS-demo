@@ -17,7 +17,7 @@ export default function AuthShell({ children }: Props) {
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
-    // Login route is always public
+    // /login is always public
     if (pathname === "/login") {
       setChecking(false);
       setAuthed(false);
@@ -30,9 +30,18 @@ export default function AuthShell({ children }: Props) {
       .getUser()
       .then(({ data, error }) => {
         if (!isMounted) return;
-        if (error) {
-          console.error("Error checking auth:", error);
+
+        // Ignore the expected "no session" case so dev overlay doesn't scream
+        if (
+          error &&
+          !(
+            error.name === "AuthSessionMissingError" ||
+            error.message?.toLowerCase().includes("auth session missing")
+          )
+        ) {
+          console.error("Unexpected auth error:", error);
         }
+
         if (data?.user) {
           setAuthed(true);
         } else {
@@ -50,7 +59,7 @@ export default function AuthShell({ children }: Props) {
     };
   }, [pathname, router]);
 
-  // Public login page: no auth shell, no header/nav, just the page
+  // Public login page: no shell/header
   if (pathname === "/login") {
     return <>{children}</>;
   }
@@ -64,12 +73,12 @@ export default function AuthShell({ children }: Props) {
     );
   }
 
-  // If not authed, redirect is already in progress
+  // If not authed, redirect is already happening
   if (!authed) {
     return null;
   }
 
-  // Authenticated app shell: header + page content
+  // Authenticated app shell: header + page content + logout
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.replace("/login");
@@ -77,7 +86,6 @@ export default function AuthShell({ children }: Props) {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Top app bar */}
       <header className="border-b bg-slate-900 text-white">
         <div className="max-w-xl mx-auto flex items-center justify-between px-4 py-3">
           <Link href="/" className="font-semibold text-base text-white">
@@ -87,8 +95,8 @@ export default function AuthShell({ children }: Props) {
             <Link href="/teams" className="hover:underline text-white">
               Teams
             </Link>
-            <Link href="/" className="hover:underline text-white">
-              Players
+            <Link href="/calendar" className="hover:underline text-white">
+              Calendar
             </Link>
             <Link href="/sessions" className="hover:underline text-white">
               Sessions
@@ -107,7 +115,6 @@ export default function AuthShell({ children }: Props) {
         </div>
       </header>
 
-      {/* Page content */}
       <div className="flex-1 max-w-xl mx-auto w-full px-4 py-4">
         {children}
       </div>
