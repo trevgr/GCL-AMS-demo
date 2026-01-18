@@ -4,7 +4,7 @@ import AuthShell from "./AuthShell";
 import RegisterSW from "./RegisterSW";
 
 export const metadata: Metadata = {
-  title: "Grassroots AMS",
+  title: "Grassroots CoachLab",
   description: "Grassroots football attendance and player development",
   manifest: "/manifest.webmanifest",
   themeColor: "#020617",

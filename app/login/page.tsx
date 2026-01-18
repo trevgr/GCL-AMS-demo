@@ -43,7 +43,7 @@ export default function LoginPage() {
     <main className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-sm border rounded-lg bg-white px-4 py-5 shadow-sm">
         <h1 className="text-xl font-semibold mb-4 text-center">
-          Coach login
+          Grassroots CoachLab login
         </h1>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="text-sm">

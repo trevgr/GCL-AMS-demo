@@ -78,20 +78,27 @@ export default function AuthShell({ children }: Props) {
     return null;
   }
 
-  // Authenticated app shell: header + page content + logout
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.replace("/login");
   };
 
+  const version = "v1.0";
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b bg-slate-900 text-white">
-        <div className="max-w-xl mx-auto flex items-center justify-between px-4 py-3">
-          <Link href="/" className="font-semibold text-base text-white">
-            GCL
-          </Link>
-          <nav className="flex items-center gap-4 text-sm">
+        <div className="max-w-xl mx-auto flex items-center justify-between px-4 py-3 gap-3">
+          <div className="flex items-center gap-2">
+            <Link href="/" className="font-semibold text-base text-white">
+              GCL
+            </Link>
+            <span className="text-[0.65rem] px-2 py-0.5 rounded-full border border-white/40 text-white/80">
+              {version}
+            </span>
+          </div>
+
+          <nav className="flex items-center gap-3 text-xs sm:text-sm">
             <Link href="/teams" className="hover:underline text-white">
               Teams
             </Link>
@@ -101,10 +108,13 @@ export default function AuthShell({ children }: Props) {
             <Link href="/reports" className="hover:underline text-white">
               Reports
             </Link>
+            <Link href="/about" className="hover:underline text-white">
+              About
+            </Link>
             <button
               type="button"
               onClick={handleLogout}
-              className="ml-2 text-xs px-2 py-1 rounded border border-white/60 hover:bg-white hover:text-slate-900 transition"
+              className="ml-1 text-[0.65rem] sm:text-xs px-2 py-1 rounded border border-white/60 hover:bg-white hover:text-slate-900 transition"
             >
               Logout
             </button>

@@ -284,16 +284,10 @@ export default async function ReportsPage(props: {
 
                       <div className="flex gap-2 mt-2 text-xs">
                         <Link
-                          href={`/sessions/${s.id}?view=attendance`}
+                          href={`/sessions/${s.id}`}
                           className="px-3 py-1 rounded border border-slate-400 hover:bg-slate-100"
                         >
-                          Attendance
-                        </Link>
-                        <Link
-                          href={`/sessions/${s.id}?view=development`}
-                          className="px-3 py-1 rounded border border-blue-500 text-blue-700 hover:bg-blue-50"
-                        >
-                          Player development
+                          Open Session Details
                         </Link>
                       </div>
                     </li>

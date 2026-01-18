@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 
 type Status = "present" | "absent";
@@ -89,12 +88,6 @@ export default function AttendanceClient({
   initialAttendance,
   initialFeedback,
 }: Props) {
-  const searchParams = useSearchParams();
-  const initialViewParam = searchParams.get("view");
-  const [view, setView] = useState<"attendance" | "development">(
-    initialViewParam === "development" ? "development" : "attendance"
-  );
-
   // Attendance state
   const [attendance, setAttendance] = useState<
     Record<number, Status | null>
@@ -109,7 +102,7 @@ export default function AttendanceClient({
     return map;
   });
 
-  // Feedback state per player (0–5, but default = 1)
+  // Feedback state per player (0–5, default = 1)
   const [feedback, setFeedback] = useState<
     Record<
       number,
@@ -253,44 +246,16 @@ export default function AttendanceClient({
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Session details</h2>
+        <h2 className="text-xl font-semibold">Attendance & Ratings</h2>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 text-sm">
-        <button
-          type="button"
-          onClick={() => setView("attendance")}
-          className={`px-3 py-1 rounded border ${
-            view === "attendance"
-              ? "bg-slate-900 text-white border-slate-900"
-              : "bg-white text-slate-800 border-slate-300"
-          }`}
-        >
-          Attendance
-        </button>
-        <button
-          type="button"
-          onClick={() => setView("development")}
-          className={`px-3 py-1 rounded border ${
-            view === "development"
-              ? "bg-slate-900 text-white border-slate-900"
-              : "bg-white text-slate-800 border-slate-300"
-          }`}
-        >
-          Player development
-        </button>
-      </div>
-
-      {view === "development" && (
-        <p className="text-xs text-gray-600">
-          <span className="font-semibold">Legend:</span>{" "}
-          <span className="font-medium">0</span> = Not assessed,{" "}
-          <span className="font-medium">1</span>–<span className="font-medium">2</span> = Needs work,{" "}
-          <span className="font-medium">3</span> = Okay,{" "}
-          <span className="font-medium">4</span>–<span className="font-medium">5</span> = Strong.
-        </p>
-      )}
+      <p className="text-xs text-gray-600">
+        Mark who&apos;s present and record quick 0–5 ratings.{" "}
+        <span className="font-semibold">0</span> = Not assessed,{" "}
+        <span className="font-semibold">1–2</span> = Needs work,{" "}
+        <span className="font-semibold">3</span> = Okay,{" "}
+        <span className="font-semibold">4–5</span> = Strong.
+      </p>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
@@ -354,8 +319,8 @@ export default function AttendanceClient({
                   </div>
                 </div>
 
-                {/* Player development view */}
-                {view === "development" && f && (
+                {/* Ratings section */}
+                {f && (
                   <div className="mt-3 border-t pt-2 text-sm">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                       {categories.map((cat) => {
@@ -421,7 +386,7 @@ export default function AttendanceClient({
                     >
                       {savingFeedbackId === p.id
                         ? "Saving…"
-                        : "Save feedback"}
+                        : "Save attendance & ratings"}
                     </button>
                   </div>
                 )}
