@@ -170,6 +170,22 @@ export default async function SessionAttendancePage(props: {
         {session.theme && (
           <p className="text-gray-600 text-sm">Theme: {session.theme}</p>
         )}
+
+        {/* Download buttons */}
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          <a
+            href={`/api/sessions/${sessionId}/attendance`}
+            className="px-3 py-1 rounded border border-slate-400 bg-white hover:bg-slate-100"
+          >
+            Download attendance CSV
+          </a>
+          <a
+            href={`/api/sessions/${sessionId}/development`}
+            className="px-3 py-1 rounded border border-blue-500 text-blue-700 bg-white hover:bg-blue-50"
+          >
+            Download development CSV
+          </a>
+        </div>
       </section>
 
       <AttendanceClient

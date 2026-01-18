@@ -21,7 +21,7 @@ export default async function TeamsPage() {
     console.error("Error loading teams:", error);
     return (
       <main className="min-h-screen p-4">
-        <h1 className="text-2xl font-bold mb-4">Grassroots AMS</h1>
+        <h1 className="text-2xl font-bold mb-4">Grassroots CoachLab</h1>
         <p>Failed to load teams.</p>
       </main>
     );
@@ -29,7 +29,7 @@ export default async function TeamsPage() {
 
   return (
     <main className="min-h-screen p-4">
-      <h1 className="text-2xl font-bold mb-4">Grassroots AMS</h1>
+      <h1 className="text-2xl font-bold mb-4">Grassroots CoachLab</h1>
 
       <h2 className="text-xl mb-2">Teams</h2>
 

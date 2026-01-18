@@ -67,6 +67,22 @@ function formatDateDDMMYYYY(iso: string) {
   return `${day}/${month}/${year}`;
 }
 
+function ratingColorClass(value: number) {
+  if (value === 0) return "bg-gray-300 text-gray-800";
+  if (value <= 2) return "bg-red-500 text-white";
+  if (value === 3) return "bg-amber-400 text-slate-900";
+  return "bg-green-500 text-white"; // 4–5
+}
+
+function ratingLabel(value: number) {
+  if (value === 0) return "Not assessed";
+  if (value === 1) return "1 – Needs a lot of work";
+  if (value === 2) return "2 – Below average";
+  if (value === 3) return "3 – Okay";
+  if (value === 4) return "4 – Good";
+  return "5 – Excellent";
+}
+
 export default function AttendanceClient({
   sessionId,
   players,
@@ -93,7 +109,7 @@ export default function AttendanceClient({
     return map;
   });
 
-  // Feedback state per player
+  // Feedback state per player (0–5, but default = 1)
   const [feedback, setFeedback] = useState<
     Record<
       number,
@@ -113,14 +129,14 @@ export default function AttendanceClient({
     const map: any = {};
     for (const p of players) {
       map[p.id] = {
-        ball_control: 3,
-        passing: 3,
-        shooting: 3,
-        fitness: 3,
-        attitude: 3,
-        coachability: 3,
-        positioning: 3,
-        speed_agility: 3,
+        ball_control: 0,
+        passing: 0,
+        shooting: 0,
+        fitness: 0,
+        attitude: 0,
+        coachability: 0,
+        positioning: 0,
+        speed_agility: 0,
         comments: "",
       };
     }
@@ -266,9 +282,17 @@ export default function AttendanceClient({
         </button>
       </div>
 
-      {error && (
-        <p className="text-sm text-red-600">{error}</p>
+      {view === "development" && (
+        <p className="text-xs text-gray-600">
+          <span className="font-semibold">Legend:</span>{" "}
+          <span className="font-medium">0</span> = Not assessed,{" "}
+          <span className="font-medium">1</span>–<span className="font-medium">2</span> = Needs work,{" "}
+          <span className="font-medium">3</span> = Okay,{" "}
+          <span className="font-medium">4</span>–<span className="font-medium">5</span> = Strong.
+        </p>
       )}
+
+      {error && <p className="text-sm text-red-600">{error}</p>}
 
       {players.length === 0 ? (
         <p>No players assigned to this team.</p>
@@ -283,6 +307,7 @@ export default function AttendanceClient({
                 key={p.id}
                 className="border rounded px-3 py-2 bg-white"
               >
+                {/* Header: player info + attendance controls */}
                 <div className="flex justify-between items-start">
                   <div>
                     <div className="font-medium">{p.name}</div>
@@ -332,34 +357,42 @@ export default function AttendanceClient({
                 {/* Player development view */}
                 {view === "development" && f && (
                   <div className="mt-3 border-t pt-2 text-sm">
-                    <div className="grid grid-cols-2 gap-2 mb-2">
-                      {categories.map((cat) => (
-                        <label
-                          key={cat.key}
-                          className="flex flex-col gap-1"
-                        >
-                          <span>{cat.label}</span>
-                          <select
-                            value={f[cat.key]}
-                            onChange={(e) =>
-                              handleFeedbackChange(
-                                p.id,
-                                cat.key,
-                                Number(e.target.value)
-                              )
-                            }
-                            className="border rounded px-2 py-1 text-xs"
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                      {categories.map((cat) => {
+                        const value = f[cat.key];
+                        return (
+                          <div
+                            key={cat.key}
+                            className="flex flex-col gap-1"
                           >
-                            <option value={1}>
-                              1 – Needs a lot of work
-                            </option>
-                            <option value={2}>2 – Below average</option>
-                            <option value={3}>3 – Okay</option>
-                            <option value={4}>4 – Good</option>
-                            <option value={5}>5 – Excellent</option>
-                          </select>
-                        </label>
-                      ))}
+                            <div className="flex items-center justify-between text-xs">
+                              <span>{cat.label}</span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[0.65rem] ${ratingColorClass(
+                                  value
+                                )}`}
+                              >
+                                {ratingLabel(value)}
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={5}
+                              step={1}
+                              value={value}
+                              onChange={(e) =>
+                                handleFeedbackChange(
+                                  p.id,
+                                  cat.key,
+                                  Number(e.target.value)
+                                )
+                              }
+                              className="w-full"
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
 
                     <div className="mb-2">

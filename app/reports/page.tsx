@@ -137,6 +137,13 @@ export default async function ReportsPage(props: {
 
   for (const row of typedFeedback) {
     if (!row.player) continue;
+
+    const hasBall = row.ball_control > 0;
+    const hasAtt = row.attitude > 0;
+
+    // If there are no meaningful scores on this row, skip it
+    if (!hasBall && !hasAtt) continue;
+
     const existing = devByPlayer.get(row.player_id);
     if (!existing) {
       devByPlayer.set(row.player_id, {
@@ -144,18 +151,25 @@ export default async function ReportsPage(props: {
         name: row.player.name,
         dob: row.player.dob,
         active: row.player.active,
-        avgBallControl: row.ball_control,
-        avgAttitude: row.attitude,
+        avgBallControl: hasBall ? row.ball_control : 0,
+        avgAttitude: hasAtt ? row.attitude : 0,
         sampleCount: 1,
       });
     } else {
       const n = existing.sampleCount;
+
+      const nextBall = hasBall
+        ? (existing.avgBallControl * n + row.ball_control) / (n + 1)
+        : existing.avgBallControl;
+
+      const nextAtt = hasAtt
+        ? (existing.avgAttitude * n + row.attitude) / (n + 1)
+        : existing.avgAttitude;
+
       devByPlayer.set(row.player_id, {
         ...existing,
-        avgBallControl:
-          (existing.avgBallControl * n + row.ball_control) / (n + 1),
-        avgAttitude:
-          (existing.avgAttitude * n + row.attitude) / (n + 1),
+        avgBallControl: nextBall,
+        avgAttitude: nextAtt,
         sampleCount: n + 1,
       });
     }
@@ -208,7 +222,19 @@ export default async function ReportsPage(props: {
 
         {/* Attendance tab */}
         {activeTab === "sessions" && (
-          <section className="space-y-2">
+          <section className="space-y-3">
+            <div className="flex justify-between items-center">
+              <h2 className="text-sm font-semibold">
+                All sessions overview
+              </h2>
+              <a
+                href="/api/reports/attendance"
+                className="text-xs px-3 py-1 rounded border border-slate-400 bg-white hover:bg-slate-100"
+              >
+                Download sessions CSV
+              </a>
+            </div>
+
             {sessionsError ? (
               <p>Failed to load sessions.</p>
             ) : typedSessions.length === 0 ? (
@@ -280,7 +306,19 @@ export default async function ReportsPage(props: {
 
         {/* Development tab */}
         {activeTab === "development" && (
-          <section className="space-y-2">
+          <section className="space-y-3">
+            <div className="flex justify-between items-center">
+              <h2 className="text-sm font-semibold">
+                Players needing development focus
+              </h2>
+              <a
+                href="/api/reports/development"
+                className="text-xs px-3 py-1 rounded border border-blue-500 text-blue-700 bg-white hover:bg-blue-50"
+              >
+                Download development CSV
+              </a>
+            </div>
+
             {feedbackError ? (
               <p>Failed to load development data.</p>
             ) : focusPlayers.length === 0 ? (
@@ -321,10 +359,9 @@ export default async function ReportsPage(props: {
                       </div>
                     </div>
                     <div className="mt-1 text-xs text-gray-500">
-                      Click player via <span className="font-semibold">
-                        Teams
-                      </span>{" "}
-                      to view context and session history.
+                      Click player via{" "}
+                      <span className="font-semibold">Teams</span> to
+                      view context and session history.
                     </div>
                   </li>
                 ))}
