@@ -88,19 +88,25 @@ function formatDateDDMMYYYY(iso: string) {
   return `${day}/${month}/${year}`;
 }
 
+/* -----------------------------------------------------------
+   NEW: Granular category-level labels for AVERAGES
+------------------------------------------------------------*/
 function ratingLabel(value: number) {
   if (value === 0) return "Not assessed";
-  if (value <= 2) return "Needs work";
-  if (value === 3) return "Okay";
-  if (value === 4) return "Good";
-  return "Excellent";
+  if (value < 2) return "Needs significant support";     // 0–1.9
+  if (value < 3) return "Needs focused work";            // 2.0–2.9
+  if (value < 3.75) return "Developing well";            // 3.0–3.74
+  if (value < 4.5) return "Strong area";                 // 3.75–4.49
+  return "Key strength";                                 // 4.5–5.0
 }
 
 function ratingBadgeClass(value: number) {
   if (value === 0) return "bg-gray-200 text-gray-800";
-  if (value <= 2) return "bg-red-500 text-white";
-  if (value === 3) return "bg-amber-400 text-slate-900";
-  return "bg-green-500 text-white"; // 4–5
+  if (value < 2) return "bg-red-600 text-white";          // big support needed
+  if (value < 3) return "bg-orange-500 text-white";       // focused work needed
+  if (value < 3.75) return "bg-amber-400 text-slate-900"; // developing well
+  if (value < 4.5) return "bg-green-500 text-white";      // strong area
+  return "bg-emerald-700 text-white";                     // key strength
 }
 
 export default async function ReportsPage(props: {
@@ -112,7 +118,7 @@ export default async function ReportsPage(props: {
   const activeTab: "sessions" | "development" =
     view === "development" ? "development" : "sessions";
 
-  // ---- Load teams (for development filter) ----
+  // ---- Load teams ----
   const { data: teams, error: teamsError } = await supabase
     .from("teams")
     .select("id, name, age_group, season")
@@ -133,11 +139,9 @@ export default async function ReportsPage(props: {
     }
   }
 
-  const selectedTeam = typedTeams.find(
-    (t) => t.id === selectedTeamId
-  );
+  const selectedTeam = typedTeams.find((t) => t.id === selectedTeamId);
 
-  // ---- Sessions & attendance summary (all teams) ----
+  // ---- Sessions ----
   const { data: sessions, error: sessionsError } = await supabase
     .from("sessions")
     .select(
@@ -164,21 +168,16 @@ export default async function ReportsPage(props: {
 
   const typedAttendance = (attendance ?? []) as AttendanceRow[];
 
-  const counts = new Map<
-    number,
-    { present: number; totalMarked: number }
-  >();
+  const counts = new Map<number, { present: number; totalMarked: number }>();
   for (const row of typedAttendance) {
     const entry =
       counts.get(row.session_id) ?? { present: 0, totalMarked: 0 };
     entry.totalMarked += 1;
-    if (row.status === "present") {
-      entry.present += 1;
-    }
+    if (row.status === "present") entry.present += 1;
     counts.set(row.session_id, entry);
   }
 
-  // ---- Development summary (by category, filtered by team) ----
+  // ---- Development (category summary only) ----
   const { data: feedbackRows, error: feedbackError } = await supabase
     .from("coach_feedback")
     .select(
@@ -193,42 +192,24 @@ export default async function ReportsPage(props: {
       positioning,
       speed_agility,
       comments,
-      player:players (
-        id,
-        name,
-        dob,
-        active
-      ),
+      player:players ( id, name, dob, active ),
       session:sessions (
         id,
         session_date,
         team_id,
-        team:teams (
-          id,
-          name,
-          age_group,
-          season
-        )
+        team:teams ( id, name, age_group, season )
       )
     `
     );
 
   const typedFeedback = (feedbackRows ?? []) as FeedbackJoined[];
 
-  // Filter feedback rows to the selected team only
   const filteredFeedback =
     selectedTeamId == null
       ? []
-      : typedFeedback.filter(
-          (row) => row.session?.team_id === selectedTeamId
-        );
+      : typedFeedback.filter((row) => row.session?.team_id === selectedTeamId);
 
-  // Aggregate per category across filtered feedback
-  const categoryTotals = new Map<
-    CategoryKey,
-    { sum: number; count: number }
-  >();
-
+  const categoryTotals = new Map<CategoryKey, { sum: number; count: number }>();
   for (const meta of categoryMeta) {
     categoryTotals.set(meta.key, { sum: 0, count: 0 });
   }
@@ -236,7 +217,6 @@ export default async function ReportsPage(props: {
   for (const row of filteredFeedback) {
     for (const meta of categoryMeta) {
       const value = row[meta.key];
-      // Ignore 0 = "not assessed"
       if (typeof value === "number" && value > 0) {
         const totals = categoryTotals.get(meta.key)!;
         totals.sum += value;
@@ -248,20 +228,11 @@ export default async function ReportsPage(props: {
   const categorySummary = categoryMeta
     .map((meta) => {
       const totals = categoryTotals.get(meta.key)!;
-      const avg =
-        totals.count > 0 ? totals.sum / totals.count : null;
-      return {
-        key: meta.key,
-        label: meta.label,
-        avg,
-        count: totals.count,
-      };
+      const avg = totals.count > 0 ? totals.sum / totals.count : null;
+      return { key: meta.key, label: meta.label, avg, count: totals.count };
     })
-    .filter((c) => c.avg !== null) // only show categories with actual data
-    .sort((a, b) => {
-      // weakest first (lowest avg)
-      return (a.avg ?? 0) - (b.avg ?? 0);
-    });
+    .filter((c) => c.avg !== null)
+    .sort((a, b) => (a.avg ?? 0) - (b.avg ?? 0));
 
   return (
     <main className="min-h-screen space-y-4">
@@ -298,13 +269,11 @@ export default async function ReportsPage(props: {
           </Link>
         </div>
 
-        {/* Attendance tab (all teams) */}
+        {/* Attendance tab */}
         {activeTab === "sessions" && (
           <section className="space-y-3">
             <div className="flex justify-between items-center">
-              <h2 className="text-sm font-semibold">
-                All sessions overview
-              </h2>
+              <h2 className="text-sm font-semibold">All sessions overview</h2>
               <a
                 href="/api/reports/attendance"
                 className="text-xs px-3 py-1 rounded border border-slate-400 bg-white hover:bg-slate-100"
@@ -376,7 +345,7 @@ export default async function ReportsPage(props: {
           </section>
         )}
 
-        {/* Development tab (category-only, filtered by team) */}
+        {/* Development tab */}
         {activeTab === "development" && (
           <section className="space-y-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -385,28 +354,21 @@ export default async function ReportsPage(props: {
                   Category overview by team
                 </h2>
                 <p className="text-xs text-gray-600">
-                  Averages are calculated for the selected team across all
-                  its sessions, ignoring <span className="font-mono">0</span>{" "}
-                  scores (not assessed). Player-level development needs are
-                  available only in the CSV export.
+                  Averages ignore <span className="font-mono">0</span> scores.
+                  Individual player development needs remain available in the
+                  CSV export.
                 </p>
               </div>
-              <div className="flex flex-col items-end gap-1">
-                <a
-                  href="/api/reports/development"
-                  className="text-xs px-3 py-1 rounded border border-blue-500 text-blue-700 bg-white hover:bg-blue-50"
-                >
-                  Download development CSV
-                </a>
-              </div>
+              <a
+                href="/api/reports/development"
+                className="text-xs px-3 py-1 rounded border border-blue-500 text-blue-700 bg-white hover:bg-blue-50"
+              >
+                Download development CSV
+              </a>
             </div>
 
-            {/* Team filter pills */}
-            {teamsError ? (
-              <p>Failed to load teams.</p>
-            ) : typedTeams.length === 0 ? (
-              <p>No teams available.</p>
-            ) : (
+            {/* Team filter */}
+            {!teamsError && typedTeams.length > 0 && (
               <div className="flex flex-wrap gap-2 text-xs mb-2">
                 {typedTeams.map((t) => {
                   const isActive = t.id === selectedTeamId;
@@ -431,18 +393,13 @@ export default async function ReportsPage(props: {
               </div>
             )}
 
+            {/* Category list */}
             {feedbackError ? (
               <p>Failed to load development data.</p>
             ) : selectedTeamId == null ? (
               <p>No team selected.</p>
             ) : categorySummary.length === 0 ? (
-              <p>
-                No development ratings recorded yet for{" "}
-                {selectedTeam
-                  ? `${selectedTeam.name} (${selectedTeam.age_group})`
-                  : "this team"}
-                .
-              </p>
+              <p>No development ratings recorded for this team.</p>
             ) : (
               <ul className="space-y-2">
                 {categorySummary.map((c) => (
@@ -456,12 +413,13 @@ export default async function ReportsPage(props: {
                         Samples: {c.count}
                       </div>
                     </div>
+
                     <div className="text-right text-sm flex flex-col items-end gap-1">
                       <div>
                         <span className="font-semibold">
                           {c.avg?.toFixed(1)}
                         </span>{" "}
-                          / 5
+                        / 5
                       </div>
                       {c.avg != null && (
                         <span

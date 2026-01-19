@@ -48,6 +48,14 @@ const categories = [
 
 type CategoryKey = (typeof categories)[number]["key"];
 
+const ratingChoices = [
+  { value: 1, label: "1", description: "Needs a lot of work" },
+  { value: 2, label: "2", description: "Below average" },
+  { value: 3, label: "3", description: "Okay" },
+  { value: 4, label: "4", description: "Good" },
+  { value: 5, label: "5", description: "Excellent" },
+] as const;
+
 export default function FeedbackClient({ playerId, summary, recent }: Props) {
   const router = useRouter();
 
@@ -138,27 +146,36 @@ export default function FeedbackClient({ playerId, summary, recent }: Props) {
       >
         <div className="font-medium">New feedback</div>
 
-        <div className="grid grid-cols-2 gap-2 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           {categories.map((cat) => (
-            <label key={cat.key} className="flex flex-col gap-1">
+            <div key={cat.key} className="flex flex-col gap-1">
               <span>{cat.label}</span>
-              <select
-                value={ratings[cat.key]}
-                onChange={(e) =>
-                  handleChange(
-                    cat.key,
-                    Number(e.target.value) as unknown as number
-                  )
-                }
-                className="border rounded px-2 py-1"
-              >
-                <option value={1}>1 – Needs a lot of work</option>
-                <option value={2}>2 – Below average</option>
-                <option value={3}>3 – Okay</option>
-                <option value={4}>4 – Good</option>
-                <option value={5}>5 – Excellent</option>
-              </select>
-            </label>
+              <div className="flex flex-wrap gap-1">
+                {ratingChoices.map((choice) => {
+                  const isActive = ratings[cat.key] === choice.value;
+                  return (
+                    <button
+                      key={choice.value}
+                      type="button"
+                      onClick={() => handleChange(cat.key, choice.value)}
+                      className={`px-2 py-1 rounded-full border text-xs
+                        ${
+                          isActive
+                            ? "bg-slate-900 text-white border-slate-900"
+                            : "bg-white text-slate-800 border-slate-300 hover:bg-slate-100"
+                        }`}
+                      title={choice.description}
+                    >
+                      {choice.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="text-[0.7rem] text-gray-500">
+                {ratingChoices.find((c) => c.value === ratings[cat.key])
+                  ?.description ?? ""}
+              </div>
+            </div>
           ))}
         </div>
 
@@ -209,9 +226,7 @@ export default function FeedbackClient({ playerId, summary, recent }: Props) {
                   {f.fitness}, A {f.attitude}, C {f.coachability}, Pos{" "}
                   {f.positioning}, Sp {f.speed_agility}
                 </div>
-                {f.comments && (
-                  <div className="mt-1">{f.comments}</div>
-                )}
+                {f.comments && <div className="mt-1">{f.comments}</div>}
               </li>
             ))}
           </ul>

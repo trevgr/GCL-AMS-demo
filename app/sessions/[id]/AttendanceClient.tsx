@@ -58,6 +58,9 @@ const categories: { key: CategoryKey; label: string }[] = [
   { key: "speed_agility", label: "Speed / Agility" },
 ];
 
+// 0–5 tick marks
+const ratingTicks = [0, 1, 2, 3, 4, 5];
+
 function formatDateDDMMYYYY(iso: string) {
   const d = new Date(iso);
   const day = String(d.getDate()).padStart(2, "0");
@@ -102,7 +105,7 @@ export default function AttendanceClient({
     return map;
   });
 
-  // Feedback state per player (0–5, default = 1)
+  // Feedback state per player (0–5, default = 0 = not assessed)
   const [feedback, setFeedback] = useState<
     Record<
       number,
@@ -236,8 +239,17 @@ export default function AttendanceClient({
     );
 
     if (error) {
-      console.error("Error saving feedback:", error);
+      console.error(
+        "Error saving feedback:",
+        {
+          message: (error as any).message,
+          details: (error as any).details,
+          hint: (error as any).hint,
+          hint: (error as any).hint,
+        }
+      );
       setError("Failed to save feedback. Please try again.");
+    } else {
     }
 
     setSavingFeedbackId(null);
@@ -325,6 +337,7 @@ export default function AttendanceClient({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                       {categories.map((cat) => {
                         const value = f[cat.key];
+
                         return (
                           <div
                             key={cat.key}
@@ -340,21 +353,50 @@ export default function AttendanceClient({
                                 {ratingLabel(value)}
                               </span>
                             </div>
-                            <input
-                              type="range"
-                              min={0}
-                              max={5}
-                              step={1}
-                              value={value}
-                              onChange={(e) =>
-                                handleFeedbackChange(
-                                  p.id,
-                                  cat.key,
-                                  Number(e.target.value)
-                                )
-                              }
-                              className="w-full"
-                            />
+
+                            {/* Slider + clickable tick marks */}
+                            <div className="flex flex-col gap-1">
+                              <input
+                                type="range"
+                                min={0}
+                                max={5}
+                                step={1}
+                                value={value}
+                                onChange={(e) =>
+                                  handleFeedbackChange(
+                                    p.id,
+                                    cat.key,
+                                    Number(e.target.value)
+                                  )
+                                }
+                                className="w-full"
+                              />
+                              <div className="flex justify-between text-[0.65rem] text-gray-500">
+                                {ratingTicks.map((tick) => {
+                                  const isActive = value === tick;
+                                  return (
+                                    <button
+                                      key={tick}
+                                      type="button"
+                                      onClick={() =>
+                                        handleFeedbackChange(
+                                          p.id,
+                                          cat.key,
+                                          tick
+                                        )
+                                      }
+                                      className={`min-w-[1.25rem] text-center ${
+                                        isActive
+                                          ? "font-semibold text-slate-900"
+                                          : "text-gray-400"
+                                      }`}
+                                    >
+                                      {tick}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
                           </div>
                         );
                       })}
@@ -398,3 +440,4 @@ export default function AttendanceClient({
     </section>
   );
 }
+
