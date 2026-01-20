@@ -27,6 +27,7 @@ type TeamRow = {
   name: string;
   age_group: string;
   season: string;
+  active: boolean;
 };
 
 type FeedbackJoined = {
@@ -89,24 +90,24 @@ function formatDateDDMMYYYY(iso: string) {
 }
 
 /* -----------------------------------------------------------
-   NEW: Granular category-level labels for AVERAGES
+   Category-level labels for AVERAGES (development tab)
 ------------------------------------------------------------*/
 function ratingLabel(value: number) {
   if (value === 0) return "Not assessed";
-  if (value < 2) return "Needs significant support";     // 0–1.9
-  if (value < 3) return "Needs focused work";            // 2.0–2.9
-  if (value < 3.75) return "Developing well";            // 3.0–3.74
-  if (value < 4.5) return "Strong area";                 // 3.75–4.49
-  return "Key strength";                                 // 4.5–5.0
+  if (value < 2) return "Needs significant support"; // 0–1.9
+  if (value < 3) return "Needs focused work"; // 2.0–2.9
+  if (value < 3.75) return "Developing well"; // 3.0–3.74
+  if (value < 4.5) return "Strong area"; // 3.75–4.49
+  return "Key strength"; // 4.5–5.0
 }
 
 function ratingBadgeClass(value: number) {
   if (value === 0) return "bg-gray-200 text-gray-800";
-  if (value < 2) return "bg-red-600 text-white";          // big support needed
-  if (value < 3) return "bg-orange-500 text-white";       // focused work needed
+  if (value < 2) return "bg-red-600 text-white"; // big support needed
+  if (value < 3) return "bg-orange-500 text-white"; // focused work needed
   if (value < 3.75) return "bg-amber-400 text-slate-900"; // developing well
-  if (value < 4.5) return "bg-green-500 text-white";      // strong area
-  return "bg-emerald-700 text-white";                     // key strength
+  if (value < 4.5) return "bg-green-500 text-white"; // strong area
+  return "bg-emerald-700 text-white"; // key strength
 }
 
 export default async function ReportsPage(props: {
@@ -118,10 +119,11 @@ export default async function ReportsPage(props: {
   const activeTab: "sessions" | "development" =
     view === "development" ? "development" : "sessions";
 
-  // ---- Load teams ----
+  // ---- Load teams (active only) ----
   const { data: teams, error: teamsError } = await supabase
     .from("teams")
-    .select("id, name, age_group, season")
+    .select("id, name, age_group, season, active")
+    .eq("active", true)
     .order("age_group", { ascending: true })
     .order("name", { ascending: true });
 
@@ -131,17 +133,21 @@ export default async function ReportsPage(props: {
   if (typedTeams.length > 0) {
     if (team_id) {
       const parsed = Number(team_id);
-      selectedTeamId = Number.isNaN(parsed)
-        ? typedTeams[0].id
-        : parsed;
+      selectedTeamId = Number.isNaN(parsed) ? typedTeams[0].id : parsed;
     } else {
       selectedTeamId = typedTeams[0].id;
     }
   }
 
-  const selectedTeam = typedTeams.find((t) => t.id === selectedTeamId);
+  const selectedTeam = typedTeams.find((t) => t.id === selectedTeamId) ?? null;
 
-  // ---- Sessions ----
+  // Dev CSV URL (aggregated per team in /api/reports/development)
+  const devCsvUrl =
+    selectedTeamId != null
+      ? `/api/reports/development?team_id=${selectedTeamId}`
+      : "/api/reports/development";
+
+  // ---- Sessions (attendance overview) ----
   const { data: sessions, error: sessionsError } = await supabase
     .from("sessions")
     .select(
@@ -354,13 +360,15 @@ export default async function ReportsPage(props: {
                   Category overview by team
                 </h2>
                 <p className="text-xs text-gray-600">
-                  Averages ignore <span className="font-mono">0</span> scores.
-                  Individual player development needs remain available in the
-                  CSV export.
+                  This view shows average ratings for the selected team across
+                  all its sessions (ignoring{" "}
+                  <span className="font-mono">0</span> = not assessed). The CSV
+                  export is aggregated by session for that team (one row per
+                  session).
                 </p>
               </div>
               <a
-                href="/api/reports/development"
+                href={devCsvUrl}
                 className="text-xs px-3 py-1 rounded border border-blue-500 text-blue-700 bg-white hover:bg-blue-50"
               >
                 Download development CSV
@@ -368,7 +376,11 @@ export default async function ReportsPage(props: {
             </div>
 
             {/* Team filter */}
-            {!teamsError && typedTeams.length > 0 && (
+            {teamsError ? (
+              <p>Failed to load teams.</p>
+            ) : typedTeams.length === 0 ? (
+              <p>No active teams available.</p>
+            ) : (
               <div className="flex flex-wrap gap-2 text-xs mb-2">
                 {typedTeams.map((t) => {
                   const isActive = t.id === selectedTeamId;
@@ -399,7 +411,13 @@ export default async function ReportsPage(props: {
             ) : selectedTeamId == null ? (
               <p>No team selected.</p>
             ) : categorySummary.length === 0 ? (
-              <p>No development ratings recorded for this team.</p>
+              <p>
+                No development ratings recorded yet for{" "}
+                {selectedTeam
+                  ? `${selectedTeam.name} (${selectedTeam.age_group})`
+                  : "this team"}
+                .
+              </p>
             ) : (
               <ul className="space-y-2">
                 {categorySummary.map((c) => (

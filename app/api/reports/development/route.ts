@@ -1,21 +1,41 @@
 // app/api/reports/development/route.ts
-import { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { supabase } from "../../../../lib/supabaseClient";
 
-function csvEscape(value: string | number | null | undefined): string {
-  const s = value == null ? "" : String(value);
-  const escaped = s.replace(/"/g, '""');
-  return `"${escaped}"`;
-}
+export const dynamic = "force-dynamic";
 
-export async function GET(_req: NextRequest) {
-  // Load all coach_feedback with player + session + team information
+type CategoryKey =
+  | "ball_control"
+  | "passing"
+  | "shooting"
+  | "fitness"
+  | "attitude"
+  | "coachability"
+  | "positioning"
+  | "speed_agility";
+
+const categoryKeys: CategoryKey[] = [
+  "ball_control",
+  "passing",
+  "shooting",
+  "fitness",
+  "attitude",
+  "coachability",
+  "positioning",
+  "speed_agility",
+];
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const teamIdParam = url.searchParams.get("team_id");
+  const teamId = teamIdParam ? Number(teamIdParam) : null;
+
+  // 1) Load feedback joined to sessions + teams
   const { data, error } = await supabase
     .from("coach_feedback")
     .select(
       `
       session_id,
-      player_id,
       ball_control,
       passing,
       shooting,
@@ -24,85 +44,171 @@ export async function GET(_req: NextRequest) {
       coachability,
       positioning,
       speed_agility,
-      comments,
-      player:players (
-        id,
-        name,
-        dob
-      ),
       session:sessions (
+        id,
         session_date,
         session_type,
+        theme,
+        team_id,
         team:teams (
+          id,
           name,
           age_group,
           season
         )
       )
     `
-    )
-    .order("session_id", { ascending: true });
+    );
 
   if (error) {
-    console.error("Error loading development report:", error);
-    return new Response("Failed to load development report", {
-      status: 500,
-    });
-  }
-
-  const rows = data ?? [];
-
-  const header = [
-    "Session Date",
-    "Session Type",
-    "Team",
-    "Age Group",
-    "Season",
-    "Player Name",
-    "DOB",
-    "Ball Control",
-    "Passing",
-    "Shooting",
-    "Fitness",
-    "Attitude",
-    "Coachability",
-    "Positioning",
-    "Speed/Agility",
-    "Comments",
-  ].map(csvEscape);
-
-  const lines: string[] = [header.join(",")];
-
-  for (const row of rows as any[]) {
-    const player = row.player ?? {};
-    const session = row.session ?? {};
-    const team = session.team ?? {};
-
-    lines.push(
-      [
-        csvEscape(session.session_date ?? ""),
-        csvEscape(session.session_type ?? ""),
-        csvEscape(team.name ?? ""),
-        csvEscape(team.age_group ?? ""),
-        csvEscape(team.season ?? ""),
-        csvEscape(player.name ?? ""),
-        csvEscape(player.dob ?? ""),
-        csvEscape(row.ball_control),
-        csvEscape(row.passing),
-        csvEscape(row.shooting),
-        csvEscape(row.fitness),
-        csvEscape(row.attitude),
-        csvEscape(row.coachability),
-        csvEscape(row.positioning),
-        csvEscape(row.speed_agility),
-        csvEscape(row.comments ?? ""),
-      ].join(",")
+    console.error("Development CSV – error loading feedback:", error);
+    return NextResponse.json(
+      { error: "Failed to load development data" },
+      { status: 500 }
     );
   }
 
-  const csv = lines.join("\r\n");
+  const rows = (data ?? []) as any[];
 
-  const filename = `development-report-all-sessions.csv`;
+  // 2) Aggregate by session (per team), ignoring 0 = "not assessed"
+  type AggRow = {
+    sessionId: number;
+    sessionDate: string;
+    sessionType: string;
+    theme: string | null;
+    teamId: number;
+    teamName: string;
+    ageGroup: string;
+    season: string;
+    sums: Record<CategoryKey, number>;
+    counts: Record<CategoryKey, number>;
+    totalSamples: number;
+  };
+
+  const bySession = new Map<number, AggRow>();
+
+  for (const row of rows) {
+    const session = row.session;
+    if (!session || !session.team) continue;
+
+    if (teamId != null && session.team_id !== teamId) {
+      continue;
+    }
+
+    const sessId = session.id as number;
+
+    let agg = bySession.get(sessId);
+    if (!agg) {
+      agg = {
+        sessionId: sessId,
+        sessionDate: session.session_date,
+        sessionType: session.session_type,
+        theme: session.theme,
+        teamId: session.team.id,
+        teamName: session.team.name,
+        ageGroup: session.team.age_group,
+        season: session.team.season,
+        sums: {
+          ball_control: 0,
+          passing: 0,
+          shooting: 0,
+          fitness: 0,
+          attitude: 0,
+          coachability: 0,
+          positioning: 0,
+          speed_agility: 0,
+        },
+        counts: {
+          ball_control: 0,
+          passing: 0,
+          shooting: 0,
+          fitness: 0,
+          attitude: 0,
+          coachability: 0,
+          positioning: 0,
+          speed_agility: 0,
+        },
+        totalSamples: 0,
+      };
+      bySession.set(sessId, agg);
+    }
+
+    for (const key of categoryKeys) {
+      const value = row[key] as number | null;
+      if (typeof value === "number" && value > 0) {
+        agg.sums[key] += value;
+        agg.counts[key] += 1;
+        agg.totalSamples += 1;
+      }
+    }
+  }
+
+  // 3) Build CSV – one row per session (team aggregated)
+  const header = [
+    "Team",
+    "Age group",
+    "Season",
+    "Session ID",
+    "Session date",
+    "Session type",
+    "Theme",
+    "Ball control avg",
+    "Passing avg",
+    "Shooting avg",
+    "Fitness avg",
+    "Attitude avg",
+    "Coachability avg",
+    "Positioning avg",
+    "Speed / agility avg",
+    "Samples (non-zero ratings)",
+  ];
+
+  const lines: string[] = [];
+  lines.push(header.join(","));
+
+  // sort sessions by date ascending
+  const sortedAgg = Array.from(bySession.values()).sort((a, b) =>
+    a.sessionDate.localeCompare(b.sessionDate)
+  );
+
+  for (const agg of sortedAgg) {
+    const avgValues: (string | number)[] = [];
+
+    for (const key of categoryKeys) {
+      const count = agg.counts[key];
+      if (count === 0) {
+        avgValues.push("");
+      } else {
+        const avg = agg.sums[key] / count;
+        avgValues.push(avg.toFixed(2));
+      }
+    }
+
+    const themeSafe =
+      agg.theme?.includes(",") || agg.theme?.includes('"')
+        ? `"${String(agg.theme).replace(/"/g, '""')}"`
+        : agg.theme ?? "";
+
+    const row = [
+      agg.teamName,
+      agg.ageGroup,
+      agg.season,
+      agg.sessionId,
+      agg.sessionDate,
+      agg.sessionType,
+      themeSafe,
+      ...avgValues,
+      agg.totalSamples,
+    ];
+
+    lines.push(row.join(","));
+  }
+
+  const csv = lines.join("\n");
+
+  const filename = teamId
+    ? `team-development-${teamId}.csv`
+    : "team-development.csv";
 
   return new Response(csv, {
     status: 200,

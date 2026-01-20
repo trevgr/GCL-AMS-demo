@@ -63,7 +63,7 @@ export default async function TeamDetail(props: {
     );
   }
 
-  // Load team
+  // ---- Load team ----
   const { data: team, error: teamError } = await supabase
     .from("teams")
     .select("*")
@@ -79,29 +79,42 @@ export default async function TeamDetail(props: {
     );
   }
 
-  // Load players assigned to this team
-  const { data: assignments, error: playersError } = await supabase
-    .from("player_team_assignments")
+  // ---- Load players assigned to this team using players + team_players join ----
+  const { data: playersData, error: playersError } = await supabase
+    .from("players")
     .select(
       `
-      player:players (
-        id,
-        name,
-        dob,
-        active
+      id,
+      name,
+      dob,
+      active,
+      team_players!inner (
+        team_id
       )
     `
     )
-    .eq("team_id", teamId);
+    .eq("team_players.team_id", teamId)
+    .order("name", { ascending: true });
 
   if (playersError) {
     console.error("Error loading players for team:", playersError);
   }
 
-  const players: Player[] =
-    assignments?.map((row: any) => row.player).filter(Boolean) ?? [];
+  console.log("TeamDetail: players query", {
+    teamId,
+    count: playersData?.length ?? 0,
+    error: playersError,
+  });
 
-  // Load sessions for this team
+  const players: Player[] =
+    playersData?.map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      dob: p.dob,
+      active: p.active,
+    })) ?? [];
+
+  // ---- Load sessions for this team ----
   const { data: sessions, error: sessionsError } = await supabase
     .from("sessions")
     .select("*")
@@ -114,7 +127,7 @@ export default async function TeamDetail(props: {
 
   const typedSessions = (sessions ?? []) as Session[];
 
-  // Load attendance for all players, joined with sessions to filter by team
+  // ---- Load attendance for all players, joined with sessions to filter by team ----
   const { data: attendanceRows, error: attendanceError } = await supabase
     .from("attendance")
     .select(
