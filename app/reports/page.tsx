@@ -89,8 +89,21 @@ function formatDateDDMMYYYY(iso: string) {
   return `${day}/${month}/${year}`;
 }
 
+function monthYearLabel(year: number, monthIndex: number) {
+  const d = new Date(year, monthIndex, 1);
+  return d.toLocaleDateString("en-GB", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function weekdayShort(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-GB", { weekday: "short" }); // Mon, Tue, etc.
+}
+
 /* -----------------------------------------------------------
-   Category-level labels for AVERAGES (development tab)
+   Category-level labels for AVERAGES
 ------------------------------------------------------------*/
 function ratingLabel(value: number) {
   if (value === 0) return "Not assessed";
@@ -110,16 +123,36 @@ function ratingBadgeClass(value: number) {
   return "bg-emerald-700 text-white"; // key strength
 }
 
+/* -----------------------------------------------------------
+   Relative Age Quartile helpers
+   Simple model: Jan–Mar = Q1, Apr–Jun = Q2, Jul–Sep = Q3, Oct–Dec = Q4
+------------------------------------------------------------*/
+type RAQ = "Q1" | "Q2" | "Q3" | "Q4";
+
+function getRelativeAgeQuartile(dobIso: string | null | undefined): RAQ | null {
+  if (!dobIso) return null;
+  const d = new Date(dobIso);
+  if (Number.isNaN(d.getTime())) return null;
+  const monthIndex = d.getMonth(); // 0–11
+  if (monthIndex <= 2) return "Q1";
+  if (monthIndex <= 5) return "Q2";
+  if (monthIndex <= 8) return "Q3";
+  return "Q4";
+}
+
 export default async function ReportsPage(props: {
-  searchParams: Promise<{ view?: string; team_id?: string }>;
+  searchParams: Promise<{ view?: string; team_id?: string; mode?: string }>;
 }) {
   const sp = await props.searchParams;
-  const { view, team_id } = sp;
+  const { view, team_id, mode } = sp;
 
   const activeTab: "sessions" | "development" =
     view === "development" ? "development" : "sessions";
 
-  // ---- Load teams (active only) ----
+  const sessionsMode: "recent" | "history" =
+    mode === "history" ? "history" : "recent";
+
+  // ---- Load teams (active, RLS should limit to coach's teams / directors) ----
   const { data: teams, error: teamsError } = await supabase
     .from("teams")
     .select("id, name, age_group, season, active")
@@ -129,25 +162,26 @@ export default async function ReportsPage(props: {
 
   const typedTeams = (teams ?? []) as TeamRow[];
 
-  let selectedTeamId: number | null = null;
+  // Shared team_id parsing
+  const parsedTeamId = team_id ? Number(team_id) : NaN;
+
+  // For Sessions tab: optional filter (null => all teams)
+  const sessionTeamFilterId = Number.isNaN(parsedTeamId)
+    ? null
+    : parsedTeamId;
+
+  // For Development tab: always choose a concrete team if possible
+  let devSelectedTeamId: number | null = null;
   if (typedTeams.length > 0) {
-    if (team_id) {
-      const parsed = Number(team_id);
-      selectedTeamId = Number.isNaN(parsed) ? typedTeams[0].id : parsed;
-    } else {
-      selectedTeamId = typedTeams[0].id;
-    }
+    devSelectedTeamId = !Number.isNaN(parsedTeamId)
+      ? parsedTeamId
+      : typedTeams[0].id;
   }
 
-  const selectedTeam = typedTeams.find((t) => t.id === selectedTeamId) ?? null;
+  const selectedTeam =
+    typedTeams.find((t) => t.id === devSelectedTeamId) ?? null;
 
-  // Dev CSV URL (aggregated per team in /api/reports/development)
-  const devCsvUrl =
-    selectedTeamId != null
-      ? `/api/reports/development?team_id=${selectedTeamId}`
-      : "/api/reports/development";
-
-  // ---- Sessions (attendance overview) ----
+  // ---- Sessions & attendance summary ----
   const { data: sessions, error: sessionsError } = await supabase
     .from("sessions")
     .select(
@@ -183,7 +217,48 @@ export default async function ReportsPage(props: {
     counts.set(row.session_id, entry);
   }
 
-  // ---- Development (category summary only) ----
+  // Filter sessions by selected team (for Sessions tab)
+  const sessionsForFilter =
+    sessionTeamFilterId == null
+      ? typedSessions
+      : typedSessions.filter((s) => s.team_id === sessionTeamFilterId);
+
+  // Recent = most recent 4 sessions (after filter)
+  const recentSessions = sessionsForFilter.slice(0, 4);
+
+  // History = past sessions grouped by month (after filter)
+  const now = new Date();
+  const todayIso = now.toISOString().slice(0, 10);
+
+  const historySessions = sessionsForFilter.filter(
+    (s) => s.session_date < todayIso
+  );
+
+  type MonthKey = string; // "YYYY-MM"
+  const historyByMonth = new Map<
+    MonthKey,
+    { label: string; items: SessionRow[] }
+  >();
+
+  for (const s of historySessions) {
+    const d = new Date(s.session_date);
+    if (Number.isNaN(d.getTime())) continue;
+    const year = d.getFullYear();
+    const monthIndex = d.getMonth();
+    const key = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+    const label = monthYearLabel(year, monthIndex);
+
+    if (!historyByMonth.has(key)) {
+      historyByMonth.set(key, { label, items: [] });
+    }
+    historyByMonth.get(key)!.items.push(s);
+  }
+
+  const sortedHistoryMonths = Array.from(historyByMonth.entries()).sort(
+    ([aKey], [bKey]) => (aKey < bKey ? 1 : -1) // newest month first
+  );
+
+  // ---- Development (category summary only, per selected team) ----
   const { data: feedbackRows, error: feedbackError } = await supabase
     .from("coach_feedback")
     .select(
@@ -211,9 +286,11 @@ export default async function ReportsPage(props: {
   const typedFeedback = (feedbackRows ?? []) as FeedbackJoined[];
 
   const filteredFeedback =
-    selectedTeamId == null
+    devSelectedTeamId == null
       ? []
-      : typedFeedback.filter((row) => row.session?.team_id === selectedTeamId);
+      : typedFeedback.filter(
+          (row) => row.session?.team_id === devSelectedTeamId
+        );
 
   const categoryTotals = new Map<CategoryKey, { sum: number; count: number }>();
   for (const meta of categoryMeta) {
@@ -240,6 +317,70 @@ export default async function ReportsPage(props: {
     .filter((c) => c.avg !== null)
     .sort((a, b) => (a.avg ?? 0) - (b.avg ?? 0));
 
+  // ---- RAQ summary per team (based on team_players + players.dob) ----
+  type TeamPlayerRow = {
+    player: {
+      id: number;
+      name: string;
+      dob: string;
+      active: boolean;
+    } | null;
+  };
+
+  let raqSummary:
+    | {
+        total: number;
+        Q1: number;
+        Q2: number;
+        Q3: number;
+        Q4: number;
+      }
+    | null = null;
+
+  if (devSelectedTeamId != null) {
+    const { data: teamPlayers, error: teamPlayersError } = await supabase
+      .from("team_players")
+      .select(
+        `
+        player:players (
+          id,
+          name,
+          dob,
+          active
+        )
+      `
+      )
+      .eq("team_id", devSelectedTeamId);
+
+    if (!teamPlayersError) {
+      const typedTeamPlayers = (teamPlayers ?? []) as TeamPlayerRow[];
+      let total = 0;
+      let Q1 = 0;
+      let Q2 = 0;
+      let Q3 = 0;
+      let Q4 = 0;
+
+      for (const row of typedTeamPlayers) {
+        const p = row.player;
+        if (!p || !p.active) continue;
+        const raq = getRelativeAgeQuartile(p.dob);
+        if (!raq) continue;
+        total += 1;
+        if (raq === "Q1") Q1 += 1;
+        else if (raq === "Q2") Q2 += 1;
+        else if (raq === "Q3") Q3 += 1;
+        else if (raq === "Q4") Q4 += 1;
+      }
+
+      if (total > 0) {
+        raqSummary = { total, Q1, Q2, Q3, Q4 };
+      }
+    }
+  }
+
+  const raqPercent = (count: number, total: number) =>
+    total === 0 ? "0%" : `${Math.round((count / total) * 100)}%`;
+
   return (
     <main className="min-h-screen space-y-4">
       <section>
@@ -250,8 +391,8 @@ export default async function ReportsPage(props: {
         </p>
       </section>
 
-      {/* Tabs */}
       <section>
+        {/* Main tabs: Sessions vs Development */}
         <div className="flex gap-2 text-sm mb-3">
           <Link
             href="/reports?view=sessions"
@@ -275,11 +416,18 @@ export default async function ReportsPage(props: {
           </Link>
         </div>
 
-        {/* Attendance tab */}
+        {/* ----------------------- SESSION TAB ----------------------- */}
         {activeTab === "sessions" && (
-          <section className="space-y-3">
-            <div className="flex justify-between items-center">
-              <h2 className="text-sm font-semibold">All sessions overview</h2>
+          <section className="space-y-4">
+            {/* Header row */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold">Sessions overview</h2>
+                <p className="text-xs text-gray-600">
+                  Default view shows the last 4 sessions. Use History to
+                  browse older sessions grouped by month.
+                </p>
+              </div>
               <a
                 href="/api/reports/attendance"
                 className="text-xs px-3 py-1 rounded border border-slate-400 bg-white hover:bg-slate-100"
@@ -288,106 +436,39 @@ export default async function ReportsPage(props: {
               </a>
             </div>
 
-            {sessionsError ? (
-              <p>Failed to load sessions.</p>
-            ) : typedSessions.length === 0 ? (
-              <p>No sessions recorded yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {typedSessions.map((s) => {
-                  const count = counts.get(s.id) ?? {
-                    present: 0,
-                    totalMarked: 0,
-                  };
+            {/* Team filter for sessions */}
+            {!teamsError && typedTeams.length > 0 && (
+              <div className="flex flex-wrap gap-2 text-xs mb-1">
+                {/* All teams pill */}
+                {(() => {
+                  const params = new URLSearchParams();
+                  params.set("view", "sessions");
+                  params.set("mode", sessionsMode);
+                  const href = `/reports?${params.toString()}`;
+                  const isActive = sessionTeamFilterId == null;
 
                   return (
-                    <li
-                      key={s.id}
-                      className="border rounded px-3 py-2 bg-white space-y-1"
+                    <Link
+                      href={href}
+                      className={`px-3 py-1 rounded-full border ${
+                        isActive
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "bg-white text-slate-800 border-slate-300 hover:bg-slate-100"
+                      }`}
                     >
-                      <div className="flex justify-between">
-                        <div>
-                          <div className="font-medium">
-                            {formatDateDDMMYYYY(s.session_date)} ·{" "}
-                            {s.session_type}
-                          </div>
-                          <div className="text-sm text-gray-600">
-                            {s.team
-                              ? `${s.team.name} · ${s.team.age_group} · ${s.team.season}`
-                              : "Unknown team"}
-                          </div>
-                          {s.theme && (
-                            <div className="text-xs text-gray-500">
-                              Theme: {s.theme}
-                            </div>
-                          )}
-                        </div>
-                        <div className="text-right text-sm">
-                          <div>
-                            <span className="font-semibold">
-                              {count.present}
-                            </span>{" "}
-                            present
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {count.totalMarked} marked
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2 mt-2 text-xs">
-                        <Link
-                          href={`/sessions/${s.id}`}
-                          className="px-3 py-1 rounded border border-slate-400 hover:bg-slate-100"
-                        >
-                          Open session details
-                        </Link>
-                      </div>
-                    </li>
+                      All teams
+                    </Link>
                   );
-                })}
-              </ul>
-            )}
-          </section>
-        )}
+                })()}
 
-        {/* Development tab */}
-        {activeTab === "development" && (
-          <section className="space-y-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-sm font-semibold">
-                  Category overview by team
-                </h2>
-                <p className="text-xs text-gray-600">
-                  This view shows average ratings for the selected team across
-                  all its sessions (ignoring{" "}
-                  <span className="font-mono">0</span> = not assessed). The CSV
-                  export is aggregated by session for that team (one row per
-                  session).
-                </p>
-              </div>
-              <a
-                href={devCsvUrl}
-                className="text-xs px-3 py-1 rounded border border-blue-500 text-blue-700 bg-white hover:bg-blue-50"
-              >
-                Download development CSV
-              </a>
-            </div>
-
-            {/* Team filter */}
-            {teamsError ? (
-              <p>Failed to load teams.</p>
-            ) : typedTeams.length === 0 ? (
-              <p>No active teams available.</p>
-            ) : (
-              <div className="flex flex-wrap gap-2 text-xs mb-2">
                 {typedTeams.map((t) => {
-                  const isActive = t.id === selectedTeamId;
                   const params = new URLSearchParams();
-                  params.set("view", "development");
+                  params.set("view", "sessions");
+                  params.set("mode", sessionsMode);
                   params.set("team_id", String(t.id));
                   const href = `/reports?${params.toString()}`;
+                  const isActive = sessionTeamFilterId === t.id;
+
                   return (
                     <Link
                       key={t.id}
@@ -405,10 +486,288 @@ export default async function ReportsPage(props: {
               </div>
             )}
 
+            {/* Sub-tabs: Recent vs History */}
+            <div className="flex gap-2 text-xs mb-2">
+              {(() => {
+                const params = new URLSearchParams();
+                params.set("view", "sessions");
+                params.set("mode", "recent");
+                if (sessionTeamFilterId != null) {
+                  params.set("team_id", String(sessionTeamFilterId));
+                }
+                const href = `/reports?${params.toString()}`;
+                return (
+                  <Link
+                    href={href}
+                    className={`px-3 py-1 rounded border ${
+                      sessionsMode === "recent"
+                        ? "bg-slate-900 text-white border-slate-900"
+                        : "bg-white text-slate-800 border-slate-300"
+                    }`}
+                  >
+                    Recent (last 4)
+                  </Link>
+                );
+              })()}
+              {(() => {
+                const params = new URLSearchParams();
+                params.set("view", "sessions");
+                params.set("mode", "history");
+                if (sessionTeamFilterId != null) {
+                  params.set("team_id", String(sessionTeamFilterId));
+                }
+                const href = `/reports?${params.toString()}`;
+                return (
+                  <Link
+                    href={href}
+                    className={`px-3 py-1 rounded border ${
+                      sessionsMode === "history"
+                        ? "bg-slate-900 text-white border-slate-900"
+                        : "bg-white text-slate-800 border-slate-300"
+                    }`}
+                  >
+                    History (by month)
+                  </Link>
+                );
+              })()}
+            </div>
+
+            {/* Attendance data */}
+            {sessionsError ? (
+              <p>Failed to load sessions.</p>
+            ) : sessionsMode === "recent" ? (
+              // RECENT VIEW
+              recentSessions.length === 0 ? (
+                <p>No recent sessions found.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {recentSessions.map((s) => {
+                    const count = counts.get(s.id) ?? {
+                      present: 0,
+                      totalMarked: 0,
+                    };
+                    return (
+                      <li
+                        key={s.id}
+                        className="border rounded px-3 py-2 bg-white space-y-1"
+                      >
+                        <div className="flex justify-between">
+                          <div>
+                            <div className="font-medium">
+                              {weekdayShort(s.session_date)}{" "}
+                              {formatDateDDMMYYYY(s.session_date)} ·{" "}
+                              {s.session_type}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              {s.team
+                                ? `${s.team.name} · ${s.team.age_group} · ${s.team.season}`
+                                : "Unknown team"}
+                            </div>
+                            {s.theme && (
+                              <div className="text-xs text-gray-500">
+                                Theme: {s.theme}
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-right text-sm">
+                            <div>
+                              <span className="font-semibold">
+                                {count.present}
+                              </span>{" "}
+                              present
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {count.totalMarked} marked
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 mt-2 text-xs">
+                          <Link
+                            href={`/sessions/${s.id}`}
+                            className="px-3 py-1 rounded border border-slate-400 hover:bg-slate-100"
+                          >
+                            Open session details
+                          </Link>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )
+            ) : (
+              // HISTORY VIEW
+              (historySessions.length === 0 && (
+                <p>No past sessions recorded yet.</p>
+              )) || (
+                <div className="space-y-4">
+                  {sortedHistoryMonths.map(([key, group]) => (
+                    <section key={key} className="space-y-2">
+                      <h3 className="text-sm font-semibold text-gray-700">
+                        {group.label}
+                      </h3>
+                      <ul className="space-y-2">
+                        {group.items.map((s) => {
+                          const count = counts.get(s.id) ?? {
+                            present: 0,
+                            totalMarked: 0,
+                          };
+                          return (
+                            <li
+                              key={s.id}
+                              className="border rounded px-3 py-2 bg-white space-y-1"
+                            >
+                              <div className="flex justify-between">
+                                <div>
+                                  <div className="font-medium">
+                                    {weekdayShort(s.session_date)}{" "}
+                                    {formatDateDDMMYYYY(s.session_date)} ·{" "}
+                                    {s.session_type}
+                                  </div>
+                                  <div className="text-sm text-gray-600">
+                                    {s.team
+                                      ? `${s.team.name} · ${s.team.age_group} · ${s.team.season}`
+                                      : "Unknown team"}
+                                  </div>
+                                  {s.theme && (
+                                    <div className="text-xs text-gray-500">
+                                      Theme: {s.theme}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="text-right text-sm">
+                                  <div>
+                                    <span className="font-semibold">
+                                      {count.present}
+                                    </span>{" "}
+                                    present
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    {count.totalMarked} marked
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex gap-2 mt-2 text-xs">
+                                <Link
+                                  href={`/sessions/${s.id}`}
+                                  className="px-3 py-1 rounded border border-slate-400 hover:bg-slate-100"
+                                >
+                                  Open session details
+                                </Link>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </section>
+                  ))}
+                </div>
+              )
+            )}
+          </section>
+        )}
+
+        {/* -------------------- DEVELOPMENT TAB --------------------- */}
+        {activeTab === "development" && (
+          <section className="space-y-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold">
+                  Category overview by team
+                </h2>
+                <p className="text-xs text-gray-600">
+                  Averages ignore <span className="font-mono">0</span> scores.
+                  Individual player development needs remain available in the
+                  CSV export.
+                </p>
+              </div>
+              <a
+                href="/api/reports/development"
+                className="text-xs px-3 py-1 rounded border border-blue-500 text-blue-700 bg-white hover:bg-blue-50"
+              >
+                Download development CSV
+              </a>
+            </div>
+
+            {/* Team filter for development */}
+            {!teamsError && typedTeams.length > 0 && (
+              <div className="flex flex-wrap gap-2 text-xs mb-2">
+                {typedTeams.map((t) => {
+                  const params = new URLSearchParams();
+                  params.set("view", "development");
+                  params.set("team_id", String(t.id));
+                  const href = `/reports?${params.toString()}`;
+                  const isActive = devSelectedTeamId === t.id;
+
+                  return (
+                    <Link
+                      key={t.id}
+                      href={href}
+                      className={`px-3 py-1 rounded-full border ${
+                        isActive
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "bg-white text-slate-800 border-slate-300 hover:bg-slate-100"
+                      }`}
+                    >
+                      {t.name} · {t.age_group}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* RAQ summary card */}
+            {devSelectedTeamId != null && raqSummary && (
+              <div className="border rounded px-3 py-2 bg-white text-xs mb-2">
+                <div className="flex justify-between items-center mb-1">
+                  <div className="font-semibold">Relative Age Quartiles</div>
+                  {selectedTeam && (
+                    <div className="text-[0.7rem] text-gray-500">
+                      {selectedTeam.name} · {selectedTeam.season}
+                    </div>
+                  )}
+                </div>
+                <p className="text-[0.7rem] text-gray-600 mb-1">
+                  Based on month of birth for active players in this team.
+                </p>
+                <div className="grid grid-cols-4 gap-2 mt-1">
+                  <div className="border rounded px-2 py-1 text-center">
+                    <div className="text-[0.65rem] font-medium">Q1</div>
+                    <div className="text-[0.7rem]">
+                      {raqSummary.Q1} (
+                      {raqPercent(raqSummary.Q1, raqSummary.total)})
+                    </div>
+                  </div>
+                  <div className="border rounded px-2 py-1 text-center">
+                    <div className="text-[0.65rem] font-medium">Q2</div>
+                    <div className="text-[0.7rem]">
+                      {raqSummary.Q2} (
+                      {raqPercent(raqSummary.Q2, raqSummary.total)})
+                    </div>
+                  </div>
+                  <div className="border rounded px-2 py-1 text-center">
+                    <div className="text-[0.65rem] font-medium">Q3</div>
+                    <div className="text-[0.7rem]">
+                      {raqSummary.Q3} (
+                      {raqPercent(raqSummary.Q3, raqSummary.total)})
+                    </div>
+                  </div>
+                  <div className="border rounded px-2 py-1 text-center">
+                    <div className="text-[0.65rem] font-medium">Q4</div>
+                    <div className="text-[0.7rem]">
+                      {raqSummary.Q4} (
+                      {raqPercent(raqSummary.Q4, raqSummary.total)})
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Category list */}
             {feedbackError ? (
               <p>Failed to load development data.</p>
-            ) : selectedTeamId == null ? (
+            ) : devSelectedTeamId == null ? (
               <p>No team selected.</p>
             ) : categorySummary.length === 0 ? (
               <p>
@@ -428,7 +787,7 @@ export default async function ReportsPage(props: {
                     <div>
                       <div className="font-medium">{c.label}</div>
                       <div className="text-xs text-gray-500">
-                        Samples: {c.count}
+                        Samples (non-zero ratings): {c.count}
                       </div>
                     </div>
 

@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
+/* Always light theme */
 :root {
+  color-scheme: light;         /* ⬅️ key line: tell browser we're light-only */
   --background: #ffffff;
   --foreground: #171717;
 }
@@ -12,11 +14,9 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Optional but nice: make outer page background light too */
+html {
+  background-color: #e5e7eb;   /* Tailwind's slate-200 */
 }
 
 body {

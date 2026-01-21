@@ -7,11 +7,11 @@ export const metadata: Metadata = {
   title: "Grassroots CoachLab",
   description: "Grassroots football attendance and player development",
   manifest: "/manifest.webmanifest",
-  themeColor: "#020617",
+  themeColor: "#f8fafc", // light status bar / browser chrome
 };
 
 export const viewport: Viewport = {
-  themeColor: "#020617",
+  themeColor: "#f8fafc",
 };
 
 export default function RootLayout({
@@ -30,4 +30,3 @@ export default function RootLayout({
     </html>
   );
 }
-
