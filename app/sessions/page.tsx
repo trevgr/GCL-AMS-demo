@@ -17,12 +17,6 @@ type SessionRow = {
   } | null;
 };
 
-type AttendanceRow = {
-  session_id: number;
-  status: "present" | "absent";
-};
-
-// Deterministic date formatting
 function formatDateDDMMYYYY(iso: string) {
   const d = new Date(iso);
   const day = String(d.getDate()).padStart(2, "0");
@@ -31,9 +25,8 @@ function formatDateDDMMYYYY(iso: string) {
   return `${day}/${month}/${year}`;
 }
 
-export default async function SessionsSummaryPage() {
-  // Load sessions with their team info
-  const { data: sessions, error: sessionsError } = await supabase
+export default async function SessionsPage() {
+  const { data, error } = await supabase
     .from("sessions")
     .select(
       `
@@ -51,63 +44,49 @@ export default async function SessionsSummaryPage() {
     )
     .order("session_date", { ascending: false });
 
-  if (sessionsError) {
-    console.error("Error loading sessions:", sessionsError);
-    return (
-      <main className="min-h-screen">
-        <h1 className="text-2xl font-bold mb-4">Session attendance</h1>
-        <p>Failed to load sessions.</p>
-      </main>
-    );
-  }
-
-  const typedSessions = (sessions ?? []) as SessionRow[];
-
-  // Load all attendance rows
-  const { data: attendance, error: attendanceError } = await supabase
-    .from("attendance")
-    .select("session_id, status");
-
-  if (attendanceError) {
-    console.error("Error loading attendance:", attendanceError);
-  }
-
-  const typedAttendance = (attendance ?? []) as AttendanceRow[];
-
-  // Build per-session attendance counts
-  const counts = new Map<
-    number,
-    { present: number; totalMarked: number }
-  >();
-
-  for (const row of typedAttendance) {
-    const entry =
-      counts.get(row.session_id) ?? { present: 0, totalMarked: 0 };
-    entry.totalMarked += 1;
-    if (row.status === "present") {
-      entry.present += 1;
-    }
-    counts.set(row.session_id, entry);
-  }
+  const sessions = (data ?? []) as SessionRow[];
 
   return (
-    <main className="min-h-screen">
-      <h1 className="text-2xl font-bold mb-4">Session attendance</h1>
+    <main className="min-h-screen space-y-4">
+      <section className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold mb-1">Sessions</h1>
+          <p className="text-sm text-gray-600">
+            See planned sessions and open details for attendance & ratings.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Link
+            href="/sessions/import"
+            className="text-xs sm:text-sm px-3 py-1.5 rounded border border-slate-400 bg-white hover:bg-slate-100"
+          >
+            Import sessions (CSV)
+          </Link>
+          <Link
+            href="/sessions/new"
+            className="text-xs sm:text-sm px-3 py-1.5 rounded bg-slate-900 text-white hover:bg-slate-800"
+          >
+            + Plan new session
+          </Link>
+        </div>
+      </section>
 
-      {typedSessions.length === 0 ? (
-        <p>No sessions recorded yet.</p>
+      {error ? (
+        <p className="text-sm text-red-600">
+          Failed to load sessions. Please try again.
+        </p>
+      ) : sessions.length === 0 ? (
+        <p className="text-sm text-gray-700">
+          No sessions yet. Use &quot;Plan new session&quot; or &quot;Import
+          sessions (CSV)&quot; to add your first ones.
+        </p>
       ) : (
-        <ul className="space-y-2">
-          {typedSessions.map((s) => {
-            const count = counts.get(s.id) ?? {
-              present: 0,
-              totalMarked: 0,
-            };
-
-            return (
+        <section>
+          <ul className="space-y-2">
+            {sessions.map((s) => (
               <li
                 key={s.id}
-                className="border rounded px-3 py-2 flex flex-col gap-1"
+                className="border rounded px-3 py-2 bg-white space-y-1"
               >
                 <div className="flex justify-between">
                   <div>
@@ -126,27 +105,19 @@ export default async function SessionsSummaryPage() {
                       </div>
                     )}
                   </div>
-                  <div className="text-right text-sm">
+                  <div className="text-right text-xs flex flex-col gap-1">
                     <Link
                       href={`/sessions/${s.id}`}
-                      className="block hover:underline"
+                      className="px-3 py-1 rounded border border-slate-400 hover:bg-slate-100"
                     >
-                      <div>
-                        <span className="font-semibold">
-                          {count.present}
-                        </span>{" "}
-                        present
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {count.totalMarked} marked
-                      </div>
+                      Session details
                     </Link>
                   </div>
                 </div>
               </li>
-            );
-          })}
-        </ul>
+            ))}
+          </ul>
+        </section>
       )}
     </main>
   );

@@ -141,12 +141,21 @@ export default async function CalendarPage(props: {
 
   return (
     <main className="min-h-screen space-y-4">
-      <section>
-        <h1 className="text-2xl font-bold mb-2">Calendar</h1>
-        <p className="text-sm text-gray-600">
-          See upcoming sessions at a glance, or browse the full history by
-          month.
-        </p>
+      {/* Header with Plan button */}
+      <section className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold mb-2">Calendar</h1>
+          <p className="text-sm text-gray-600">
+            See upcoming sessions at a glance, or browse the full history by
+            month.
+          </p>
+        </div>
+        <Link
+          href="/sessions/new"
+          className="text-xs sm:text-sm px-3 py-1.5 rounded bg-slate-900 text-white hover:bg-slate-800"
+        >
+          + Plan new session
+        </Link>
       </section>
 
       {/* Tabs */}
@@ -216,7 +225,7 @@ export default async function CalendarPage(props: {
                       </div>
                       <div className="text-xs flex flex-col items-end gap-1">
                         <Link
-                          href={`/sessions/${s.id}?view=attendance`}
+                          href={`/sessions/${s.id}`}
                           className="px-3 py-1 rounded border border-slate-400 hover:bg-slate-100"
                         >
                           Session details
@@ -276,7 +285,7 @@ export default async function CalendarPage(props: {
                           </div>
                           <div className="text-xs flex flex-col items-end gap-1">
                             <Link
-                              href={`/sessions/${s.id}?view=attendance`}
+                              href={`/sessions/${s.id}`}
                               className="px-3 py-1 rounded border border-slate-400 hover:bg-slate-100"
                             >
                               Session details
@@ -295,4 +304,3 @@ export default async function CalendarPage(props: {
     </main>
   );
 }
-
