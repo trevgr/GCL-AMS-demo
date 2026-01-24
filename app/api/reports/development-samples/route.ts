@@ -2,36 +2,28 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-// IMPORTANT: SUPABASE_SERVICE_ROLE_KEY must NOT be exposed on the client.
-// It should only live in server-side env (e.g. .env.local, no NEXT_PUBLIC).
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: {
-    persistSession: false,
-  },
-});
-
-function csvEscape(value: any): string {
-  if (value === null || value === undefined) return "";
-  const str = String(value);
-  if (str.includes('"') || str.includes(",") || str.includes("\n")) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-}
-
 export async function GET() {
-  // Pull all samples with joins
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    console.error("Missing Supabase env vars for development-samples export", {
+      hasUrl: !!supabaseUrl,
+      hasKey: !!supabaseKey,
+    });
+    return new NextResponse("Supabase not configured", { status: 500 });
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
+  // Keep the select conservative so it won't break if a column name changes
   const { data, error } = await supabase
     .from("coach_feedback")
     .select(
       `
       id,
-      player_id,
       session_id,
+      player_id,
       coach_id,
       ball_control,
       passing,
@@ -42,7 +34,6 @@ export async function GET() {
       positioning,
       speed_agility,
       comments,
-      created_at,
       player:players (
         name,
         dob
@@ -50,7 +41,7 @@ export async function GET() {
       session:sessions (
         session_date,
         session_type,
-        theme,
+        team_id,
         team:teams (
           name,
           age_group,
@@ -58,31 +49,36 @@ export async function GET() {
         )
       )
     `
-    )
-    .order("session_id", { ascending: true });
+    );
 
   if (error) {
-    console.error("Error generating development samples CSV:", error);
-    return NextResponse.json(
-      { error: "Failed to generate CSV" },
-      { status: 500 }
+    console.error(
+      "Error loading coach_feedback for samples CSV:",
+      {
+        message: (error as any).message,
+        details: (error as any).details,
+        hint: (error as any).hint,
+        code: (error as any).code,
+      }
     );
+    return new NextResponse("Failed to load data", { status: 500 });
   }
 
   const rows = data ?? [];
 
+  // CSV header (no inserted_at now)
   const header = [
     "sample_id",
-    "player_id",
-    "player_name",
-    "player_dob",
     "session_id",
     "session_date",
     "session_type",
-    "session_theme",
+    "team_id",
     "team_name",
     "team_age_group",
     "team_season",
+    "player_id",
+    "player_name",
+    "player_dob",
     "coach_id",
     "ball_control",
     "passing",
@@ -93,53 +89,58 @@ export async function GET() {
     "positioning",
     "speed_agility",
     "comments",
-    "created_at",
   ];
 
-  const lines: string[] = [];
-  lines.push(header.join(","));
+  const escape = (value: unknown): string => {
+    if (value == null) return "";
+    const s = String(value);
+    if (s.includes('"') || s.includes(",") || s.includes("\n")) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
 
-  for (const row of rows as any[]) {
-    const player = row.player ?? {};
-    const session = row.session ?? {};
-    const team = (session as any).team ?? {};
+  const csvLines = [
+    header.join(","), // header row
+    ...rows.map((row: any) => {
+      const team = row.session?.team;
+      const player = row.player;
 
-    const lineValues = [
-      row.id,
-      row.player_id,
-      player.name ?? "",
-      player.dob ?? "",
-      row.session_id,
-      session.session_date ?? "",
-      session.session_type ?? "",
-      session.theme ?? "",
-      team.name ?? "",
-      team.age_group ?? "",
-      team.season ?? "",
-      row.coach_id ?? "",
-      row.ball_control,
-      row.passing,
-      row.shooting,
-      row.fitness,
-      row.attitude,
-      row.coachability,
-      row.positioning,
-      row.speed_agility,
-      row.comments ?? "",
-      row.created_at ?? "",
-    ].map(csvEscape);
+      return [
+        row.id,
+        row.session_id,
+        row.session?.session_date ?? "",
+        row.session?.session_type ?? "",
+        row.session?.team_id ?? "",
+        team?.name ?? "",
+        team?.age_group ?? "",
+        team?.season ?? "",
+        row.player_id,
+        player?.name ?? "",
+        player?.dob ?? "",
+        row.coach_id ?? "",
+        row.ball_control ?? "",
+        row.passing ?? "",
+        row.shooting ?? "",
+        row.fitness ?? "",
+        row.attitude ?? "",
+        row.coachability ?? "",
+        row.positioning ?? "",
+        row.speed_agility ?? "",
+        row.comments ?? "",
+      ]
+        .map(escape)
+        .join(",");
+    }),
+  ].join("\n");
 
-    lines.push(lineValues.join(","));
-  }
-
-  const csv = lines.join("\n");
-
-  return new NextResponse(csv, {
+  return new NextResponse(csvLines, {
     status: 200,
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition":
-        'attachment; filename="development_samples.csv"',
+        'attachment; filename="development-samples.csv"',
+      "Cache-Control": "no-store",
     },
   });
 }
