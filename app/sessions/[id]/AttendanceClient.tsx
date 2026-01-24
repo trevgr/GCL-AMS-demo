@@ -1,6 +1,7 @@
+// app/sessions/[id]/AttendanceClient.tsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 
 type Status = "present" | "absent";
@@ -18,7 +19,10 @@ type AttendanceRow = {
 };
 
 type FeedbackRow = {
+  id: number;
   player_id: number;
+  session_id: number;
+  coach_id: string | null;
   ball_control: number;
   passing: number;
   shooting: number;
@@ -35,6 +39,7 @@ type Props = {
   players: Player[];
   initialAttendance: AttendanceRow[];
   initialFeedback: FeedbackRow[];
+  coachCounts: Record<number, number>; // player_id -> #coaches
 };
 
 type CategoryKey =
@@ -58,7 +63,7 @@ const categories: { key: CategoryKey; label: string }[] = [
   { key: "speed_agility", label: "Speed / Agility" },
 ];
 
-// 0–5 tick marks
+// 0–5 tick marks under the slider
 const ratingTicks = [0, 1, 2, 3, 4, 5];
 
 function formatDateDDMMYYYY(iso: string) {
@@ -90,6 +95,7 @@ export default function AttendanceClient({
   players,
   initialAttendance,
   initialFeedback,
+  coachCounts,
 }: Props) {
   // Attendance state
   const [attendance, setAttendance] = useState<
@@ -136,21 +142,13 @@ export default function AttendanceClient({
         comments: "",
       };
     }
-    for (const f of initialFeedback) {
-      map[f.player_id] = {
-        ball_control: f.ball_control,
-        passing: f.passing,
-        shooting: f.shooting,
-        fitness: f.fitness,
-        attitude: f.attitude,
-        coachability: f.coachability,
-        positioning: f.positioning,
-        speed_agility: f.speed_agility,
-        comments: f.comments ?? "",
-      };
-    }
     return map;
   });
+
+  // current coach info
+  const [coachId, setCoachId] = useState<string | null>(null);
+  const [coachLoading, setCoachLoading] = useState(true);
+  const [coachError, setCoachError] = useState<string | null>(null);
 
   const [savingAttendanceId, setSavingAttendanceId] = useState<
     number | null
@@ -160,6 +158,81 @@ export default function AttendanceClient({
   );
 
   const [error, setError] = useState<string | null>(null);
+
+  // Load current coach on mount & hydrate feedback from their rows only
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCoachAndHydrate() {
+      setCoachLoading(true);
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error || !data?.user) {
+          if (!isMounted) return;
+          setCoachError("No logged-in coach; please sign in again.");
+          setCoachId(null);
+          return;
+        }
+
+        if (!isMounted) return;
+
+        setCoachId(data.user.id);
+        setCoachError(null);
+
+        // Hydrate this coach's previous ratings into the local state
+        setFeedback((prev) => {
+          const next = { ...prev };
+
+          for (const row of initialFeedback) {
+            if (row.coach_id !== data.user.id) continue;
+            // ensure player entry exists
+            if (!next[row.player_id]) {
+              next[row.player_id] = {
+                ball_control: 0,
+                passing: 0,
+                shooting: 0,
+                fitness: 0,
+                attitude: 0,
+                coachability: 0,
+                positioning: 0,
+                speed_agility: 0,
+                comments: "",
+              };
+            }
+            next[row.player_id] = {
+              ...next[row.player_id],
+              ball_control: row.ball_control,
+              passing: row.passing,
+              shooting: row.shooting,
+              fitness: row.fitness,
+              attitude: row.attitude,
+              coachability: row.coachability,
+              positioning: row.positioning,
+              speed_agility: row.speed_agility,
+              comments: row.comments ?? "",
+            };
+          }
+
+          return next;
+        });
+      } catch (err) {
+        if (!isMounted) return;
+        console.error("Error loading coach user:", err);
+        setCoachError("Problem loading coach identity.");
+        setCoachId(null);
+      } finally {
+        if (isMounted) {
+          setCoachLoading(false);
+        }
+      }
+    }
+
+    loadCoachAndHydrate();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [initialFeedback]);
 
   const handleSetStatus = async (playerId: number, status: Status) => {
     setError(null);
@@ -213,6 +286,12 @@ export default function AttendanceClient({
     setError(null);
     setSavingFeedbackId(playerId);
 
+    if (!coachId) {
+      setError("No logged-in coach; please sign in again.");
+      setSavingFeedbackId(null);
+      return;
+    }
+
     const f = feedback[playerId];
     if (!f) {
       setSavingFeedbackId(null);
@@ -223,6 +302,7 @@ export default function AttendanceClient({
       {
         player_id: playerId,
         session_id: sessionId,
+        coach_id: coachId,
         ball_control: f.ball_control,
         passing: f.passing,
         shooting: f.shooting,
@@ -234,22 +314,17 @@ export default function AttendanceClient({
         comments: f.comments.trim() || null,
       },
       {
-        onConflict: "player_id,session_id",
+        onConflict: "player_id,session_id,coach_id",
       }
     );
 
     if (error) {
-      console.error(
-        "Error saving feedback:",
-        {
-          message: (error as any).message,
-          details: (error as any).details,
-          hint: (error as any).hint,
-          hint: (error as any).hint,
-        }
-      );
+      console.error("Error saving feedback:", {
+        message: (error as any).message,
+        details: (error as any).details,
+        hint: (error as any).hint,
+      });
       setError("Failed to save feedback. Please try again.");
-    } else {
     }
 
     setSavingFeedbackId(null);
@@ -269,7 +344,17 @@ export default function AttendanceClient({
         <span className="font-semibold">4–5</span> = Strong.
       </p>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {coachLoading && (
+        <p className="text-xs text-gray-500">Checking coach identity…</p>
+      )}
+      {coachError && (
+        <p className="text-xs text-red-600">{coachError}</p>
+      )}
+      {error && (
+        <p className="text-sm text-red-600">
+          {error}
+        </p>
+      )}
 
       {players.length === 0 ? (
         <p>No players assigned to this team.</p>
@@ -291,6 +376,12 @@ export default function AttendanceClient({
                     <div className="text-sm text-gray-600">
                       DOB: {formatDateDDMMYYYY(p.dob)}
                     </div>
+                    {coachCounts[p.id] && coachCounts[p.id] > 0 && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        Rated by {coachCounts[p.id]} coach
+                        {coachCounts[p.id] > 1 ? "es" : ""}
+                      </div>
+                    )}
                     {!p.active && (
                       <div className="text-xs text-red-600">
                         Inactive
@@ -423,7 +514,9 @@ export default function AttendanceClient({
                     <button
                       type="button"
                       onClick={() => handleSaveFeedback(p.id)}
-                      disabled={savingFeedbackId === p.id}
+                      disabled={
+                        savingFeedbackId === p.id || coachLoading
+                      }
                       className="px-3 py-1 rounded bg-slate-900 text-slate-50 text-xs disabled:opacity-60"
                     >
                       {savingFeedbackId === p.id
@@ -440,4 +533,3 @@ export default function AttendanceClient({
     </section>
   );
 }
-

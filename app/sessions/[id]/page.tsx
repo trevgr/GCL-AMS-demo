@@ -32,7 +32,10 @@ type AttendanceRow = {
 };
 
 type FeedbackRow = {
+  id: number;
   player_id: number;
+  session_id: number;
+  coach_id: string | null;
   ball_control: number;
   passing: number;
   shooting: number;
@@ -52,17 +55,14 @@ function formatDateDDMMYYYY(iso: string) {
   return `${day}/${month}/${year}`;
 }
 
-export default async function SessionDetail(props: {
+export default async function SessionDetailPage(props: {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ view?: string }>;
 }) {
   const { id } = await props.params;
   const { view } = await props.searchParams;
+
   const sessionId = Number(id);
-
-  const activeTab: "attendance" | "development" =
-    view === "development" ? "development" : "attendance";
-
   if (Number.isNaN(sessionId)) {
     console.error("Invalid session id:", id);
     return (
@@ -72,8 +72,11 @@ export default async function SessionDetail(props: {
     );
   }
 
-  // ---- Load session with team info ----
-  const { data: session, error: sessionError } = await supabase
+  const activeTab: "attendance" | "development" =
+    view === "development" ? "development" : "attendance";
+
+  // ---- Load session with team ----
+  const { data: sessionRow, error: sessionError } = await supabase
     .from("sessions")
     .select(
       `
@@ -93,7 +96,7 @@ export default async function SessionDetail(props: {
     .eq("id", sessionId)
     .single<SessionRow>();
 
-  if (sessionError || !session) {
+  if (sessionError || !sessionRow) {
     console.error("Error loading session:", sessionError);
     return (
       <main className="min-h-screen p-4">
@@ -102,36 +105,37 @@ export default async function SessionDetail(props: {
     );
   }
 
-  const teamId = session.team_id;
+  const team = sessionRow.team;
 
-  // ---- Load players via team_players for this team ----
-  const { data: teamPlayerLinks, error: teamPlayersError } = await supabase
-    .from("team_players")
-    .select(
+  // ---- Load players for this session's team via team_players ----
+  let players: Player[] = [];
+  if (team) {
+    const { data: teamPlayersRows, error: teamPlayersError } = await supabase
+      .from("team_players")
+      .select(
+        `
+        player:players (
+          id,
+          name,
+          dob,
+          active
+        )
       `
-      player_id,
-      active,
-      player:players (
-        id,
-        name,
-        dob,
-        active
       )
-    `
-    )
-    .eq("team_id", teamId)
-    .or("active.is.null,active.eq.true"); // treat null active as true
+      .eq("team_id", team.id)
+      .eq("active", true);
 
-  if (teamPlayersError) {
-    console.error("Error loading team_players:", teamPlayersError);
+    if (teamPlayersError) {
+      console.error("Error loading players for team:", teamPlayersError);
+    }
+
+    players =
+      teamPlayersRows
+        ?.map((row: any) => row.player as Player | null)
+        .filter((p: Player | null) => p != null) ?? [];
   }
 
-  const players: Player[] =
-    teamPlayerLinks
-      ?.map((row: any) => row.player)
-      .filter((p: Player | null) => !!p) ?? [];
-
-  // ---- Load attendance for this session ----
+  // ---- Attendance rows for this session ----
   const { data: attendanceRows, error: attendanceError } = await supabase
     .from("attendance")
     .select("player_id, status")
@@ -141,14 +145,17 @@ export default async function SessionDetail(props: {
     console.error("Error loading attendance:", attendanceError);
   }
 
-  const initialAttendance = (attendanceRows ?? []) as AttendanceRow[];
+  const typedAttendance = (attendanceRows ?? []) as AttendanceRow[];
 
-  // ---- Load feedback for this session ----
+  // ---- Coach feedback for this session (all coaches) ----
   const { data: feedbackRows, error: feedbackError } = await supabase
     .from("coach_feedback")
     .select(
       `
+      id,
       player_id,
+      session_id,
+      coach_id,
       ball_control,
       passing,
       shooting,
@@ -163,55 +170,61 @@ export default async function SessionDetail(props: {
     .eq("session_id", sessionId);
 
   if (feedbackError) {
-    console.error("Error loading coach_feedback:", feedbackError);
+    console.error("Error loading coach feedback:", feedbackError);
   }
 
   const initialFeedback = (feedbackRows ?? []) as FeedbackRow[];
 
+  // ---- Build "how many coaches have rated this player" map ----
+  const coachCounts: Record<number, number> = {};
+  const seenPerPlayer = new Map<number, Set<string>>();
+
+  for (const row of initialFeedback) {
+    if (!row.coach_id) continue; // old rows without coach_id
+    if (!seenPerPlayer.has(row.player_id)) {
+      seenPerPlayer.set(row.player_id, new Set());
+    }
+    seenPerPlayer.get(row.player_id)!.add(row.coach_id);
+  }
+
+  for (const [playerId, set] of seenPerPlayer.entries()) {
+    coachCounts[playerId] = set.size;
+  }
+
   return (
     <main className="min-h-screen space-y-4">
       {/* Header */}
-      <section className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold">
-          {session.team
-            ? session.team.name
-            : "Unknown team"}
+      <section className="border-b pb-2">
+        <h1 className="text-2xl font-bold mb-1">
+          {team ? team.name : "Unknown team"}
         </h1>
-        <p className="text-sm text-gray-600">
-          {formatDateDDMMYYYY(session.session_date)} ·{" "}
-          {session.session_type}
-          {session.team && (
-            <>
-              {" "}
-              · {session.team.age_group} · {session.team.season}
-            </>
-          )}
+        <p className="text-gray-700 text-sm">
+          {formatDateDDMMYYYY(sessionRow.session_date)} ·{" "}
+          {sessionRow.session_type}
         </p>
-        {session.theme && (
-          <p className="text-xs text-gray-500">
-            Theme: {session.theme}
+        {team && (
+          <p className="text-gray-600 text-xs">
+            {team.age_group} · {team.season}
           </p>
         )}
-
-        <div className="flex gap-2 mt-2 text-xs">
-          <a
-            href={`/api/reports/attendance?session_id=${sessionId}`}
-            className="px-3 py-1 rounded border border-slate-400 bg-white hover:bg-slate-100"
+        {sessionRow.theme && (
+          <p className="text-gray-500 text-xs mt-1">
+            Theme: {sessionRow.theme}
+          </p>
+        )}
+        <div className="mt-2 text-xs">
+          <Link
+            href="/sessions"
+            className="text-blue-600 hover:underline"
           >
-            Download attendance CSV
-          </a>
-          <a
-            href={`/api/reports/development?session_id=${sessionId}`}
-            className="px-3 py-1 rounded border border-slate-400 bg-white hover:bg-slate-100"
-          >
-            Download development CSV
-          </a>
+            ← Back to sessions
+          </Link>
         </div>
       </section>
 
-      {/* Tabs (for future expansion – right now AttendanceClient handles ratings too) */}
-      <section className="space-y-3">
-        <div className="flex gap-2 text-sm mb-1">
+      {/* Tabs */}
+      <section>
+        <div className="flex gap-2 text-sm mb-3">
           <Link
             href={`/sessions/${sessionId}?view=attendance`}
             className={`px-3 py-1 rounded border ${
@@ -220,17 +233,45 @@ export default async function SessionDetail(props: {
                 : "bg-white text-slate-800 border-slate-300"
             }`}
           >
-            Attendance & Ratings
+            Attendance & ratings
           </Link>
-          {/* you can add a separate "Development view" later if you like */}
+          <Link
+            href={`/sessions/${sessionId}?view=development`}
+            className={`px-3 py-1 rounded border ${
+              activeTab === "development"
+                ? "bg-slate-900 text-white border-slate-900"
+                : "bg-white text-slate-800 border-slate-300"
+            }`}
+          >
+            Development summary
+          </Link>
         </div>
 
-        <AttendanceClient
-          sessionId={sessionId}
-          players={players}
-          initialAttendance={initialAttendance}
-          initialFeedback={initialFeedback}
-        />
+        {activeTab === "attendance" && (
+          <AttendanceClient
+            sessionId={sessionId}
+            players={players}
+            initialAttendance={typedAttendance}
+            initialFeedback={initialFeedback}
+            coachCounts={coachCounts}
+          />
+        )}
+
+        {activeTab === "development" && (
+          <section className="text-sm text-gray-600">
+            <p>
+              Development summary for this session will use all coach
+              ratings and is visible on the main{" "}
+              <Link
+                href="/reports?view=development"
+                className="text-blue-600 hover:underline"
+              >
+                Reports &raquo; Development dashboard
+              </Link>{" "}
+              page.
+            </p>
+          </section>
+        )}
       </section>
     </main>
   );

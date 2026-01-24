@@ -678,16 +678,25 @@ export default async function ReportsPage(props: {
                 </h2>
                 <p className="text-xs text-gray-600">
                   Averages ignore <span className="font-mono">0</span> scores.
-                  Individual player development needs remain available in the
-                  CSV export.
+                  Individual player and coach samples remain available in the
+                  CSV exports.
                 </p>
               </div>
-              <a
-                href="/api/reports/development"
-                className="text-xs px-3 py-1 rounded border border-blue-500 text-blue-700 bg-white hover:bg-blue-50"
-              >
-                Download development CSV
-              </a>
+              {/* UPDATED: two buttons instead of one */}
+              <div className="flex flex-wrap gap-2 justify-end">
+                <a
+                  href="/api/reports/development"
+                  className="text-xs px-3 py-1 rounded border border-blue-500 text-blue-700 bg-white hover:bg-blue-50"
+                >
+                  Download development CSV
+                </a>
+                <a
+                  href="/api/reports/development-samples"
+                  className="text-xs px-3 py-1 rounded border border-emerald-500 text-emerald-700 bg-white hover:bg-emerald-50"
+                >
+                  Download all samples CSV
+                </a>
+              </div>
             </div>
 
             {/* Team filter for development */}
