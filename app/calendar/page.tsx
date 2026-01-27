@@ -1,6 +1,6 @@
 // app/calendar/page.tsx
 import Link from "next/link";
-import { supabase } from "../../lib/supabaseClient";
+import { createServerSupabaseClient } from "../../lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +77,8 @@ function sessionTypeBadge(
 export default async function CalendarPage(props: {
   searchParams: Promise<{ view?: string }>;
 }) {
+  const supabase = await createServerSupabaseClient(); // ✅ server-side client
+
   const { view } = await props.searchParams;
   const activeTab: "upcoming" | "history" =
     view === "history" ? "history" : "upcoming";

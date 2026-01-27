@@ -1,6 +1,6 @@
 // app/teams/[id]/page.tsx
 import Link from "next/link";
-import { supabase } from "../../../lib/supabaseClient";
+import { createServerSupabaseClient } from "../../../lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +47,8 @@ export default async function TeamDetail(props: {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ view?: string }>;
 }) {
+  const supabase = await createServerSupabaseClient();
+
   const { id } = await props.params;
   const { view } = await props.searchParams;
   const teamId = Number(id);
@@ -79,7 +81,7 @@ export default async function TeamDetail(props: {
     );
   }
 
-  // ---- Load players assigned to this team using players + team_players join ----
+  // ---- Load players assigned to this team ----
   const { data: playersData, error: playersError } = await supabase
     .from("players")
     .select(
@@ -99,12 +101,6 @@ export default async function TeamDetail(props: {
   if (playersError) {
     console.error("Error loading players for team:", playersError);
   }
-
-  console.log("TeamDetail: players query", {
-    teamId,
-    count: playersData?.length ?? 0,
-    error: playersError,
-  });
 
   const players: Player[] =
     playersData?.map((p: any) => ({
@@ -127,7 +123,7 @@ export default async function TeamDetail(props: {
 
   const typedSessions = (sessions ?? []) as Session[];
 
-  // ---- Load attendance for all players, joined with sessions to filter by team ----
+  // ---- Load attendance joined with sessions ----
   const { data: attendanceRows, error: attendanceError } = await supabase
     .from("attendance")
     .select(
@@ -142,7 +138,7 @@ export default async function TeamDetail(props: {
     );
 
   if (attendanceError) {
-    console.error("Error loading attendance for team players:", attendanceError);
+    console.error("Error loading attendance:", attendanceError);
   }
 
   const typedAttendance = (attendanceRows ?? []) as AttendanceRow[];
@@ -243,11 +239,6 @@ export default async function TeamDetail(props: {
                               Status: {p.active ? "Active" : "Inactive"}
                             </div>
                           </div>
-                          {!p.active && (
-                            <span className="text-xs px-2 py-1 rounded bg-gray-200">
-                              Inactive
-                            </span>
-                          )}
                         </div>
 
                         <div className="mt-1 text-xs text-gray-500">

@@ -1,8 +1,9 @@
-import { createClient } from "@supabase/supabase-js";
+// lib/supabaseClient.ts
+"use client";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+import { createBrowserClient } from "@supabase/ssr";
 
-// Single client used both in server components (for data fetching)
-// and in client components (for auth & actions)
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);

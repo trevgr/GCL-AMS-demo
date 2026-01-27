@@ -1,6 +1,6 @@
 // app/players/[id]/page.tsx
 import Link from "next/link";
-import { supabase } from "../../../lib/supabaseClient";
+import { createServerSupabaseClient } from "../../../lib/supabaseServer";
 
 type Player = {
   id: number;
@@ -58,7 +58,7 @@ function yearsFromDOB(iso: string): number | null {
   return years;
 }
 
-// NEW: Relative age quartile (Q1–Q4) assuming 1 Jan cut-off
+// Relative age quartile (Q1–Q4) assuming 1 Jan cut-off
 function relativeAgeQuartile(iso: string):
   | { code: "Q1" | "Q2" | "Q3" | "Q4"; description: string }
   | null {
@@ -95,6 +95,9 @@ export default async function PlayerDetail(props: {
       </main>
     );
   }
+
+  // 🔑 Server-side Supabase client
+  const supabase = await createServerSupabaseClient();
 
   // Load player
   const { data: player, error: playerError } = await supabase

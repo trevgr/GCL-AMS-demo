@@ -1,6 +1,6 @@
 // app/sessions/[id]/page.tsx
 import Link from "next/link";
-import { supabase } from "../../../lib/supabaseClient";
+import { createServerSupabaseClient } from "../../../lib/supabaseServer";
 import AttendanceClient from "./AttendanceClient";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +59,8 @@ export default async function SessionDetailPage(props: {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ view?: string }>;
 }) {
+  const supabase = await createServerSupabaseClient(); // ✅ server-side client
+
   const { id } = await props.params;
   const { view } = await props.searchParams;
 
@@ -213,10 +215,7 @@ export default async function SessionDetailPage(props: {
           </p>
         )}
         <div className="mt-2 text-xs">
-          <Link
-            href="/sessions"
-            className="text-blue-600 hover:underline"
-          >
+          <Link href="/sessions" className="text-blue-600 hover:underline">
             ← Back to sessions
           </Link>
         </div>
@@ -233,7 +232,7 @@ export default async function SessionDetailPage(props: {
                 : "bg-white text-slate-800 border-slate-300"
             }`}
           >
-            Attendance & ratings
+            Attendance &amp; ratings
           </Link>
           <Link
             href={`/sessions/${sessionId}?view=development`}
@@ -260,8 +259,8 @@ export default async function SessionDetailPage(props: {
         {activeTab === "development" && (
           <section className="text-sm text-gray-600">
             <p>
-              Development summary for this session will use all coach
-              ratings and is visible on the main{" "}
+              Development summary for this session will use all coach ratings
+              and is visible on the main{" "}
               <Link
                 href="/reports?view=development"
                 className="text-blue-600 hover:underline"

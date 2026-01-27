@@ -1,30 +1,42 @@
 // lib/supabaseServer.ts
 import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/auth-helpers-nextjs";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-// If you have generated DB types, swap `any` for `Database`
-export async function createServerSupabaseClient(): Promise<SupabaseClient<any>> {
-  // In your Next version, cookies() is async and returns a Promise
+/**
+ * Server-side Supabase client that can read/write the auth session
+ * from cookies. This follows the latest @supabase/ssr + Next.js
+ * recommendations (using cookies().getAll / setAll).
+ */
+export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
 
-  return createServerClient(
+  const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        // Read auth cookies (access/refresh tokens)
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll();
         },
-        // No-op setters in server components (we don't mutate cookies here)
-        set() {
-          // Intentionally blank
-        },
-        remove() {
-          // Intentionally blank
+        setAll(
+          cookiesToSet: {
+            name: string;
+            value: string;
+            options: CookieOptions;
+          }[]
+        ) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch {
+            // Called from a Server Component where cookie mutation isn't allowed.
+            // This is fine if you have middleware keeping sessions fresh.
+          }
         },
       },
     }
   );
+
+  return supabase;
 }

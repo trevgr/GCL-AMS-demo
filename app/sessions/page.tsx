@@ -1,6 +1,6 @@
 // app/sessions/page.tsx
 import Link from "next/link";
-import { supabase } from "../../lib/supabaseClient";
+import { createServerSupabaseClient } from "../../lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +26,8 @@ function formatDateDDMMYYYY(iso: string) {
 }
 
 export default async function SessionsPage() {
+  const supabase = await createServerSupabaseClient();
+
   const { data, error } = await supabase
     .from("sessions")
     .select(
@@ -52,7 +54,7 @@ export default async function SessionsPage() {
         <div>
           <h1 className="text-2xl font-bold mb-1">Sessions</h1>
           <p className="text-sm text-gray-600">
-            See planned sessions and open details for attendance & ratings.
+            See planned sessions and open details for attendance &amp; ratings.
           </p>
         </div>
         <div className="flex gap-2">
@@ -91,8 +93,7 @@ export default async function SessionsPage() {
                 <div className="flex justify-between">
                   <div>
                     <div className="font-medium">
-                      {formatDateDDMMYYYY(s.session_date)} ·{" "}
-                      {s.session_type}
+                      {formatDateDDMMYYYY(s.session_date)} · {s.session_type}
                     </div>
                     <div className="text-sm text-gray-600">
                       {s.team

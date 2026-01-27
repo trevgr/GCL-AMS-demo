@@ -1,6 +1,6 @@
 // app/api/reports/development/route.ts
 import { NextResponse } from "next/server";
-import { supabase } from "../../../../lib/supabaseClient";
+import { createServerSupabaseClient } from "../../../../lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -25,10 +25,92 @@ const categoryKeys: CategoryKey[] = [
   "speed_agility",
 ];
 
+async function getAllowedTeamIds() {
+  const supabase = await createServerSupabaseClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  let allowedTeamIds: number[] | null = [];
+
+  if (!user) {
+    allowedTeamIds = [];
+  } else {
+    const { data: directorRow } = await supabase
+      .from("directors")
+      .select("user_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (directorRow) {
+      allowedTeamIds = null;
+    } else {
+      const { data: coachRow } = await supabase
+        .from("coaches")
+        .select("id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+
+      if (!coachRow) {
+        allowedTeamIds = [];
+      } else {
+        const { data: assignments } = await supabase
+          .from("coach_team_assignments")
+          .select("team_id")
+          .eq("coach_id", coachRow.id);
+
+        allowedTeamIds = (assignments ?? []).map(
+          (row: { team_id: number }) => row.team_id
+        );
+      }
+    }
+  }
+
+  return { supabase, allowedTeamIds };
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const teamIdParam = url.searchParams.get("team_id");
   const teamId = teamIdParam ? Number(teamIdParam) : null;
+
+  const { supabase, allowedTeamIds } = await getAllowedTeamIds();
+
+  // If user has no access to any team, return empty CSV with header
+  if (Array.isArray(allowedTeamIds) && allowedTeamIds.length === 0) {
+    const header = [
+      "Team",
+      "Age group",
+      "Season",
+      "Session ID",
+      "Session date",
+      "Session type",
+      "Theme",
+      "Ball control avg",
+      "Passing avg",
+      "Shooting avg",
+      "Fitness avg",
+      "Attitude avg",
+      "Coachability avg",
+      "Positioning avg",
+      "Speed / agility avg",
+      "Samples (non-zero ratings)",
+    ];
+
+    const csv = header.join(",") + "\n";
+    const filename = teamId
+      ? `team-development-${teamId}.csv`
+      : "team-development.csv";
+
+    return new Response(csv, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+      },
+    });
+  }
 
   // 1) Load feedback joined to sessions + teams
   const { data, error } = await supabase
@@ -70,7 +152,6 @@ export async function GET(req: Request) {
 
   const rows = (data ?? []) as any[];
 
-  // 2) Aggregate by session (per team), ignoring 0 = "not assessed"
   type AggRow = {
     sessionId: number;
     sessionDate: string;
@@ -91,7 +172,16 @@ export async function GET(req: Request) {
     const session = row.session;
     if (!session || !session.team) continue;
 
+    // Enforce optional team filter from query param
     if (teamId != null && session.team_id !== teamId) {
+      continue;
+    }
+
+    // Enforce allowedTeamIds filter for this user
+    if (
+      Array.isArray(allowedTeamIds) &&
+      !allowedTeamIds.includes(session.team_id)
+    ) {
       continue;
     }
 
@@ -143,7 +233,6 @@ export async function GET(req: Request) {
     }
   }
 
-  // 3) Build CSV – one row per session (team aggregated)
   const header = [
     "Team",
     "Age group",
@@ -166,7 +255,6 @@ export async function GET(req: Request) {
   const lines: string[] = [];
   lines.push(header.join(","));
 
-  // sort sessions by date ascending
   const sortedAgg = Array.from(bySession.values()).sort((a, b) =>
     a.sessionDate.localeCompare(b.sessionDate)
   );

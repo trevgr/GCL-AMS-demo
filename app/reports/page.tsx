@@ -1,6 +1,6 @@
 // app/reports/page.tsx
 import Link from "next/link";
-import { supabase } from "../../lib/supabaseClient";
+import { createServerSupabaseClient } from "../../lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
@@ -143,6 +143,7 @@ function getRelativeAgeQuartile(dobIso: string | null | undefined): RAQ | null {
 export default async function ReportsPage(props: {
   searchParams: Promise<{ view?: string; team_id?: string; mode?: string }>;
 }) {
+  const supabase = await createServerSupabaseClient();
   const sp = await props.searchParams;
   const { view, team_id, mode } = sp;
 
@@ -152,40 +153,120 @@ export default async function ReportsPage(props: {
   const sessionsMode: "recent" | "history" =
     mode === "history" ? "history" : "recent";
 
-  // ---- Load teams (active, RLS should limit to coach's teams / directors) ----
-  const { data: teams, error: teamsError } = await supabase
-    .from("teams")
-    .select("id, name, age_group, season, active")
-    .eq("active", true)
-    .order("age_group", { ascending: true })
-    .order("name", { ascending: true });
+  /* ---------------------------------------------------------
+     1) Figure out which teams this user can see
+        - Directors (in directors) → all teams
+        - Coaches (in coaches + coach_team_assignments) → subset
+  ----------------------------------------------------------*/
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  const typedTeams = (teams ?? []) as TeamRow[];
+  // null   => director, can see all teams
+  // []     => logged in but no teams assigned
+  // [ids]  => specific team IDs
+  let allowedTeamIds: number[] | null = [];
 
-  // Shared team_id parsing
+  if (!user) {
+    // AuthShell should normally prevent this, but be defensive.
+    allowedTeamIds = [];
+  } else {
+    // Director?
+    const { data: directorRow } = await supabase
+      .from("directors")
+      .select("user_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (directorRow) {
+      allowedTeamIds = null; // all teams
+    } else {
+      // Coach?
+      const { data: coachRow } = await supabase
+        .from("coaches")
+        .select("id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+
+      if (!coachRow) {
+        allowedTeamIds = [];
+      } else {
+        const { data: assignments } = await supabase
+          .from("coach_team_assignments")
+          .select("team_id")
+          .eq("coach_id", coachRow.id);
+
+        allowedTeamIds = (assignments ?? []).map(
+          (row: { team_id: number }) => row.team_id
+        );
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------
+     2) Load teams, limited by allowedTeamIds
+  ----------------------------------------------------------*/
+  let typedTeams: TeamRow[] = [];
+  let teamsError: any = null;
+
+  if (allowedTeamIds !== null && allowedTeamIds.length === 0) {
+    // Logged in but no team assignments → no teams
+    typedTeams = [];
+  } else {
+    let teamsQuery = supabase
+      .from("teams")
+      .select("id, name, age_group, season, active")
+      .eq("active", true)
+      .order("age_group", { ascending: true })
+      .order("name", { ascending: true });
+
+    if (Array.isArray(allowedTeamIds)) {
+      teamsQuery = teamsQuery.in("id", allowedTeamIds);
+    }
+
+    const { data: teams, error } = await teamsQuery;
+    typedTeams = (teams ?? []) as TeamRow[];
+    teamsError = error;
+  }
+
+  // Shared team_id parsing from query string
   const parsedTeamId = team_id ? Number(team_id) : NaN;
 
-  // For Sessions tab: optional filter (null => all teams)
+  // For Sessions tab: optional filter (null => all allowed teams)
   const sessionTeamFilterId = Number.isNaN(parsedTeamId)
     ? null
     : parsedTeamId;
 
-  // For Development tab: always choose a concrete team if possible
+  // For Development tab: must always be a team the coach is allowed to see
   let devSelectedTeamId: number | null = null;
   if (typedTeams.length > 0) {
-    devSelectedTeamId = !Number.isNaN(parsedTeamId)
+    const candidate = !Number.isNaN(parsedTeamId)
       ? parsedTeamId
+      : typedTeams[0].id;
+
+    // 🔐 Clamp devSelectedTeamId to teams the user can actually see
+    devSelectedTeamId = typedTeams.some((t) => t.id === candidate)
+      ? candidate
       : typedTeams[0].id;
   }
 
   const selectedTeam =
     typedTeams.find((t) => t.id === devSelectedTeamId) ?? null;
 
-  // ---- Sessions & attendance summary ----
-  const { data: sessions, error: sessionsError } = await supabase
-    .from("sessions")
-    .select(
-      `
+  /* ---------------------------------------------------------
+     3) Sessions & attendance summary
+        - Sessions are limited by allowedTeamIds
+  ----------------------------------------------------------*/
+  let sessionsError: any = null;
+  let typedSessions: SessionRow[] = [];
+
+  if (allowedTeamIds !== null && allowedTeamIds.length === 0) {
+    typedSessions = [];
+  } else {
+    let sessionsQuery = supabase
+      .from("sessions")
+      .select(
+        `
       id,
       team_id,
       session_date,
@@ -197,10 +278,17 @@ export default async function ReportsPage(props: {
         season
       )
     `
-    )
-    .order("session_date", { ascending: false });
+      )
+      .order("session_date", { ascending: false });
 
-  const typedSessions = (sessions ?? []) as SessionRow[];
+    if (Array.isArray(allowedTeamIds)) {
+      sessionsQuery = sessionsQuery.in("team_id", allowedTeamIds);
+    }
+
+    const { data: sessions, error } = await sessionsQuery;
+    sessionsError = error;
+    typedSessions = (sessions ?? []) as SessionRow[];
+  }
 
   const { data: attendance, error: attendanceError } = await supabase
     .from("attendance")
@@ -258,7 +346,11 @@ export default async function ReportsPage(props: {
     ([aKey], [bKey]) => (aKey < bKey ? 1 : -1) // newest month first
   );
 
-  // ---- Development (category summary only, per selected team) ----
+  /* ---------------------------------------------------------
+     4) Development (category summary per selected team)
+        - We still load all feedback, but only aggregate for
+          devSelectedTeamId, which is clamped to allowed teams.
+  ----------------------------------------------------------*/
   const { data: feedbackRows, error: feedbackError } = await supabase
     .from("coach_feedback")
     .select(
@@ -381,6 +473,9 @@ export default async function ReportsPage(props: {
   const raqPercent = (count: number, total: number) =>
     total === 0 ? "0%" : `${Math.round((count / total) * 100)}%`;
 
+  /* ---------------------------------------------------------
+     5) Render
+  ----------------------------------------------------------*/
   return (
     <main className="min-h-screen space-y-4">
       <section>
@@ -439,7 +534,7 @@ export default async function ReportsPage(props: {
             {/* Team filter for sessions */}
             {!teamsError && typedTeams.length > 0 && (
               <div className="flex flex-wrap gap-2 text-xs mb-1">
-                {/* All teams pill */}
+                {/* All teams pill (within allowed set) */}
                 {(() => {
                   const params = new URLSearchParams();
                   params.set("view", "sessions");
@@ -682,7 +777,6 @@ export default async function ReportsPage(props: {
                   CSV exports.
                 </p>
               </div>
-              {/* UPDATED: two buttons instead of one */}
               <div className="flex flex-wrap gap-2 justify-end">
                 <a
                   href="/api/reports/development"
