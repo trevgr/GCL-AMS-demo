@@ -1,6 +1,7 @@
 // app/teams/[id]/page.tsx
 import Link from "next/link";
 import { createServerSupabaseClient } from "../../../lib/supabaseServer";
+import AddPlayerClient from "./AddPlayerClient";
 
 export const dynamic = "force-dynamic";
 
@@ -211,9 +212,19 @@ export default async function TeamDetail(props: {
 
         {/* Players tab */}
         {activeTab === "players" && (
-          <section>
+          <section className="space-y-2">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-sm font-semibold text-gray-800">
+                Squad list
+              </h2>
+              <AddPlayerClient teamId={teamId} />
+            </div>
+
             {players.length === 0 ? (
-              <p>No players assigned to this team.</p>
+              <p className="text-sm text-gray-700">
+                No players assigned to this team yet. Use &quot;Add player&quot; to
+                create your first squad members.
+              </p>
             ) : (
               <ul className="space-y-2">
                 {players.map((p) => {
@@ -226,7 +237,7 @@ export default async function TeamDetail(props: {
                   return (
                     <li
                       key={p.id}
-                      className="border rounded px-3 py-2 hover:bg-slate-50"
+                      className="border rounded px-3 py-2 hover:bg-slate-50 bg-white"
                     >
                       <Link href={`/players/${p.id}`} className="block">
                         <div className="flex justify-between items-start">
@@ -239,6 +250,11 @@ export default async function TeamDetail(props: {
                               Status: {p.active ? "Active" : "Inactive"}
                             </div>
                           </div>
+                          {!p.active && (
+                            <span className="text-xs px-2 py-1 rounded bg-gray-200">
+                              Inactive
+                            </span>
+                          )}
                         </div>
 
                         <div className="mt-1 text-xs text-gray-500">
