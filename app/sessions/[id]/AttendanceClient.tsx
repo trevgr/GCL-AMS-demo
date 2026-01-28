@@ -90,6 +90,18 @@ function ratingLabel(value: number) {
   return "5 – Excellent";
 }
 
+type FeedbackState = {
+  ball_control: number;
+  passing: number;
+  shooting: number;
+  fitness: number;
+  attitude: number;
+  coachability: number;
+  positioning: number;
+  speed_agility: number;
+  comments: string;
+};
+
 export default function AttendanceClient({
   sessionId,
   players,
@@ -97,7 +109,7 @@ export default function AttendanceClient({
   initialFeedback,
   coachCounts,
 }: Props) {
-  // Attendance state
+  // Attendance state (local only until Save All)
   const [attendance, setAttendance] = useState<
     Record<number, Status | null>
   >(() => {
@@ -113,22 +125,9 @@ export default function AttendanceClient({
 
   // Feedback state per player (0–5, default = 0 = not assessed)
   const [feedback, setFeedback] = useState<
-    Record<
-      number,
-      {
-        ball_control: number;
-        passing: number;
-        shooting: number;
-        fitness: number;
-        attitude: number;
-        coachability: number;
-        positioning: number;
-        speed_agility: number;
-        comments: string;
-      }
-    >
+    Record<number, FeedbackState>
   >(() => {
-    const map: any = {};
+    const map: Record<number, FeedbackState> = {};
     for (const p of players) {
       map[p.id] = {
         ball_control: 0,
@@ -150,14 +149,9 @@ export default function AttendanceClient({
   const [coachLoading, setCoachLoading] = useState(true);
   const [coachError, setCoachError] = useState<string | null>(null);
 
-  const [savingAttendanceId, setSavingAttendanceId] = useState<
-    number | null
-  >(null);
-  const [savingFeedbackId, setSavingFeedbackId] = useState<number | null>(
-    null
-  );
-
+  const [savingAll, setSavingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
 
   // Load current coach on mount & hydrate feedback from their rows only
   useEffect(() => {
@@ -181,11 +175,10 @@ export default function AttendanceClient({
 
         // Hydrate this coach's previous ratings into the local state
         setFeedback((prev) => {
-          const next = { ...prev };
+          const next: Record<number, FeedbackState> = { ...prev };
 
           for (const row of initialFeedback) {
             if (row.coach_id !== data.user.id) continue;
-            // ensure player entry exists
             if (!next[row.player_id]) {
               next[row.player_id] = {
                 ball_control: 0,
@@ -201,14 +194,14 @@ export default function AttendanceClient({
             }
             next[row.player_id] = {
               ...next[row.player_id],
-              ball_control: row.ball_control,
-              passing: row.passing,
-              shooting: row.shooting,
-              fitness: row.fitness,
-              attitude: row.attitude,
-              coachability: row.coachability,
-              positioning: row.positioning,
-              speed_agility: row.speed_agility,
+              ball_control: row.ball_control ?? 0,
+              passing: row.passing ?? 0,
+              shooting: row.shooting ?? 0,
+              fitness: row.fitness ?? 0,
+              attitude: row.attitude ?? 0,
+              coachability: row.coachability ?? 0,
+              positioning: row.positioning ?? 0,
+              speed_agility: row.speed_agility ?? 0,
               comments: row.comments ?? "",
             };
           }
@@ -234,28 +227,11 @@ export default function AttendanceClient({
     };
   }, [initialFeedback]);
 
-  const handleSetStatus = async (playerId: number, status: Status) => {
+  // Just update local state (no DB write here)
+  const handleSetStatus = (playerId: number, status: Status) => {
     setError(null);
-    setSavingAttendanceId(playerId);
+    setSavedAt(null);
     setAttendance((prev) => ({ ...prev, [playerId]: status }));
-
-    const { error } = await supabase.from("attendance").upsert(
-      {
-        session_id: sessionId,
-        player_id: playerId,
-        status,
-      },
-      {
-        onConflict: "session_id,player_id",
-      }
-    );
-
-    if (error) {
-      console.error("Error saving attendance:", error);
-      setError("Failed to save attendance. Please try again.");
-    }
-
-    setSavingAttendanceId(null);
   };
 
   const handleFeedbackChange = (
@@ -263,6 +239,8 @@ export default function AttendanceClient({
     key: CategoryKey,
     value: number
   ) => {
+    setError(null);
+    setSavedAt(null);
     setFeedback((prev) => ({
       ...prev,
       [playerId]: {
@@ -273,6 +251,8 @@ export default function AttendanceClient({
   };
 
   const handleFeedbackComments = (playerId: number, value: string) => {
+    setError(null);
+    setSavedAt(null);
     setFeedback((prev) => ({
       ...prev,
       [playerId]: {
@@ -282,52 +262,88 @@ export default function AttendanceClient({
     }));
   };
 
-  const handleSaveFeedback = async (playerId: number) => {
+  // ONE BUTTON: save all attendance + ratings
+  const handleSaveAll = async () => {
     setError(null);
-    setSavingFeedbackId(playerId);
+    setSavedAt(null);
+    setSavingAll(true);
 
-    if (!coachId) {
-      setError("No logged-in coach; please sign in again.");
-      setSavingFeedbackId(null);
-      return;
-    }
-
-    const f = feedback[playerId];
-    if (!f) {
-      setSavingFeedbackId(null);
-      return;
-    }
-
-    const { error } = await supabase.from("coach_feedback").upsert(
-      {
-        player_id: playerId,
-        session_id: sessionId,
-        coach_id: coachId,
-        ball_control: f.ball_control,
-        passing: f.passing,
-        shooting: f.shooting,
-        fitness: f.fitness,
-        attitude: f.attitude,
-        coachability: f.coachability,
-        positioning: f.positioning,
-        speed_agility: f.speed_agility,
-        comments: f.comments.trim() || null,
-      },
-      {
-        onConflict: "player_id,session_id,coach_id",
+    try {
+      // Ensure we have a coachId
+      let currentCoachId = coachId;
+      if (!currentCoachId) {
+        const { data, error } = await supabase.auth.getUser();
+        if (error || !data?.user) {
+          setError("No logged-in coach; please sign in again.");
+          setSavingAll(false);
+          return;
+        }
+        currentCoachId = data.user.id;
+        setCoachId(data.user.id);
       }
-    );
 
-    if (error) {
-      console.error("Error saving feedback:", {
-        message: (error as any).message,
-        details: (error as any).details,
-        hint: (error as any).hint,
+      // 1) Upsert attendance for ALL players in this session
+      const attendancePayload = players.map((p) => ({
+        session_id: sessionId,
+        player_id: p.id,
+        // Treat null as "absent" for consistency;
+        // if you want "leave unchanged", you could filter null out instead.
+        status: attendance[p.id] ?? "absent",
+      }));
+
+      const { error: attendanceError } = await supabase
+        .from("attendance")
+        .upsert(attendancePayload, {
+          onConflict: "session_id,player_id",
+        });
+
+      if (attendanceError) {
+        console.error("Error saving attendance:", attendanceError);
+        setError("Failed to save attendance. Please try again.");
+        setSavingAll(false);
+        return;
+      }
+
+      // 2) Upsert feedback for ALL players for this coach & session
+      const feedbackPayload = players.map((p) => {
+        const f = feedback[p.id];
+        return {
+          player_id: p.id,
+          session_id: sessionId,
+          coach_id: currentCoachId,
+          ball_control: f?.ball_control ?? 0,
+          passing: f?.passing ?? 0,
+          shooting: f?.shooting ?? 0,
+          fitness: f?.fitness ?? 0,
+          attitude: f?.attitude ?? 0,
+          coachability: f?.coachability ?? 0,
+          positioning: f?.positioning ?? 0,
+          speed_agility: f?.speed_agility ?? 0,
+          comments: f?.comments.trim() || null,
+        };
       });
-      setError("Failed to save feedback. Please try again.");
-    }
 
-    setSavingFeedbackId(null);
+      const { error: feedbackError } = await supabase
+        .from("coach_feedback")
+        .upsert(feedbackPayload, {
+          onConflict: "player_id,session_id,coach_id",
+        });
+
+      if (feedbackError) {
+        console.error("Error saving feedback:", {
+          message: (feedbackError as any).message,
+          details: (feedbackError as any).details,
+          hint: (feedbackError as any).hint,
+        });
+        setError("Failed to save ratings. Please try again.");
+        setSavingAll(false);
+        return;
+      }
+
+      setSavedAt(new Date());
+    } finally {
+      setSavingAll(false);
+    }
   };
 
   return (
@@ -355,180 +371,184 @@ export default function AttendanceClient({
           {error}
         </p>
       )}
+      {savedAt && !error && (
+        <p className="text-xs text-green-700">
+          Saved at {savedAt.toLocaleTimeString()}
+        </p>
+      )}
 
       {players.length === 0 ? (
         <p>No players assigned to this team.</p>
       ) : (
-        <ul className="space-y-3">
-          {players.map((p) => {
-            const status = attendance[p.id] ?? null;
-            const f = feedback[p.id];
+        <>
+          <ul className="space-y-3">
+            {players.map((p) => {
+              const status = attendance[p.id] ?? null;
+              const f = feedback[p.id];
 
-            return (
-              <li
-                key={p.id}
-                className="border rounded px-3 py-2 bg-white"
-              >
-                {/* Header: player info + attendance controls */}
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="font-medium">{p.name}</div>
-                    <div className="text-sm text-gray-600">
-                      DOB: {formatDateDDMMYYYY(p.dob)}
-                    </div>
-                    {coachCounts[p.id] && coachCounts[p.id] > 0 && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        Rated by {coachCounts[p.id]} coach
-                        {coachCounts[p.id] > 1 ? "es" : ""}
+              return (
+                <li
+                  key={p.id}
+                  className="border rounded px-3 py-2 bg-white"
+                >
+                  {/* Header: player info + attendance controls */}
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="font-medium">{p.name}</div>
+                      <div className="text-sm text-gray-600">
+                        DOB: {formatDateDDMMYYYY(p.dob)}
                       </div>
-                    )}
-                    {!p.active && (
-                      <div className="text-xs text-red-600">
-                        Inactive
+                      {coachCounts[p.id] && coachCounts[p.id] > 0 && (
+                        <div className="text-xs text-gray-500 mt-1">
+                          Rated by {coachCounts[p.id]} coach
+                          {coachCounts[p.id] > 1 ? "es" : ""}
+                        </div>
+                      )}
+                      {!p.active && (
+                        <div className="text-xs text-red-600">
+                          Inactive
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-end gap-1 text-sm">
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSetStatus(p.id, "present")
+                          }
+                          className={`px-3 py-1 rounded border text-xs ${
+                            status === "present"
+                              ? "bg-green-500 text-white border-green-500"
+                              : "bg-white text-green-700 border-green-500"
+                          }`}
+                        >
+                          Present
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSetStatus(p.id, "absent")
+                          }
+                          className={`px-3 py-1 rounded border text-xs ${
+                            status === "absent"
+                              ? "bg-red-500 text-white border-red-500"
+                              : "bg-white text-red-700 border-red-500"
+                          }`}
+                        >
+                          Absent
+                        </button>
                       </div>
-                    )}
-                  </div>
-                  <div className="flex flex-col items-end gap-1 text-sm">
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleSetStatus(p.id, "present")
-                        }
-                        disabled={savingAttendanceId === p.id}
-                        className={`px-3 py-1 rounded border text-xs ${
-                          status === "present"
-                            ? "bg-green-500 text-white border-green-500"
-                            : "bg-white text-green-700 border-green-500"
-                        }`}
-                      >
-                        Present
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleSetStatus(p.id, "absent")
-                        }
-                        disabled={savingAttendanceId === p.id}
-                        className={`px-3 py-1 rounded border text-xs ${
-                          status === "absent"
-                            ? "bg-red-500 text-white border-red-500"
-                            : "bg-white text-red-700 border-red-500"
-                        }`}
-                      >
-                        Absent
-                      </button>
                     </div>
                   </div>
-                </div>
 
-                {/* Ratings section */}
-                {f && (
-                  <div className="mt-3 border-t pt-2 text-sm">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                      {categories.map((cat) => {
-                        const value = f[cat.key];
+                  {/* Ratings section */}
+                  {f && (
+                    <div className="mt-3 border-t pt-2 text-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                        {categories.map((cat) => {
+                          const value = f[cat.key];
 
-                        return (
-                          <div
-                            key={cat.key}
-                            className="flex flex-col gap-1"
-                          >
-                            <div className="flex items-center justify-between text-xs">
-                              <span>{cat.label}</span>
-                              <span
-                                className={`px-2 py-0.5 rounded text-[0.65rem] ${ratingColorClass(
-                                  value
-                                )}`}
-                              >
-                                {ratingLabel(value)}
-                              </span>
-                            </div>
+                          return (
+                            <div
+                              key={cat.key}
+                              className="flex flex-col gap-1"
+                            >
+                              <div className="flex items-center justify-between text-xs">
+                                <span>{cat.label}</span>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[0.65rem] ${ratingColorClass(
+                                    value
+                                  )}`}
+                                >
+                                  {ratingLabel(value)}
+                                </span>
+                              </div>
 
-                            {/* Slider + clickable tick marks */}
-                            <div className="flex flex-col gap-1">
-                              <input
-                                type="range"
-                                min={0}
-                                max={5}
-                                step={1}
-                                value={value}
-                                onChange={(e) =>
-                                  handleFeedbackChange(
-                                    p.id,
-                                    cat.key,
-                                    Number(e.target.value)
-                                  )
-                                }
-                                className="w-full"
-                              />
-                              <div className="flex justify-between text-[0.65rem] text-gray-500">
-                                {ratingTicks.map((tick) => {
-                                  const isActive = value === tick;
-                                  return (
-                                    <button
-                                      key={tick}
-                                      type="button"
-                                      onClick={() =>
-                                        handleFeedbackChange(
-                                          p.id,
-                                          cat.key,
-                                          tick
-                                        )
-                                      }
-                                      className={`min-w-[1.25rem] text-center ${
-                                        isActive
-                                          ? "font-semibold text-slate-900"
-                                          : "text-gray-400"
-                                      }`}
-                                    >
-                                      {tick}
-                                    </button>
-                                  );
-                                })}
+                              {/* Slider + clickable tick marks */}
+                              <div className="flex flex-col gap-1">
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={5}
+                                  step={1}
+                                  value={value}
+                                  onChange={(e) =>
+                                    handleFeedbackChange(
+                                      p.id,
+                                      cat.key,
+                                      Number(e.target.value)
+                                    )
+                                  }
+                                  className="w-full"
+                                />
+                                <div className="flex justify-between text-[0.65rem] text-gray-500">
+                                  {ratingTicks.map((tick) => {
+                                    const isActive = value === tick;
+                                    return (
+                                      <button
+                                        key={tick}
+                                        type="button"
+                                        onClick={() =>
+                                          handleFeedbackChange(
+                                            p.id,
+                                            cat.key,
+                                            tick
+                                          )
+                                        }
+                                        className={`min-w-[1.25rem] text-center ${
+                                          isActive
+                                            ? "font-semibold text-slate-900"
+                                            : "text-gray-400"
+                                        }`}
+                                      >
+                                        {tick}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
 
-                    <div className="mb-2">
-                      <label className="flex flex-col gap-1 text-xs">
-                        <span>Comments (optional)</span>
-                        <textarea
-                          rows={2}
-                          value={f.comments}
-                          onChange={(e) =>
-                            handleFeedbackComments(
-                              p.id,
-                              e.target.value
-                            )
-                          }
-                          className="border rounded px-2 py-1 w-full"
-                          placeholder="Notes specific to this session…"
-                        />
-                      </label>
+                      <div className="mb-2">
+                        <label className="flex flex-col gap-1 text-xs">
+                          <span>Comments (optional)</span>
+                          <textarea
+                            rows={2}
+                            value={f.comments}
+                            onChange={(e) =>
+                              handleFeedbackComments(
+                                p.id,
+                                e.target.value
+                              )
+                            }
+                            className="border rounded px-2 py-1 w-full"
+                            placeholder="Notes specific to this session…"
+                          />
+                        </label>
+                      </div>
                     </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
 
-                    <button
-                      type="button"
-                      onClick={() => handleSaveFeedback(p.id)}
-                      disabled={
-                        savingFeedbackId === p.id || coachLoading
-                      }
-                      className="px-3 py-1 rounded bg-slate-900 text-slate-50 text-xs disabled:opacity-60"
-                    >
-                      {savingFeedbackId === p.id
-                        ? "Saving…"
-                        : "Save attendance & ratings"}
-                    </button>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+          {/* Global save button */}
+          <div className="mt-4 flex flex-col gap-2 text-xs">
+            <button
+              type="button"
+              onClick={handleSaveAll}
+              disabled={savingAll || coachLoading}
+              className="px-3 py-2 rounded bg-slate-900 text-slate-50 disabled:opacity-60"
+            >
+              {savingAll ? "Saving…" : "Save attendance & ratings"}
+            </button>
+          </div>
+        </>
       )}
     </section>
   );

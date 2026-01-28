@@ -227,53 +227,23 @@ export default async function TeamDetail(props: {
               </p>
             ) : (
               <ul className="space-y-2">
-                {players.map((p) => {
-                  const stats =
-                    attendanceByPlayer.get(p.id) ?? {
-                      trainingSessions: 0,
-                      trainingAttended: 0,
-                    };
-
-                  return (
-                    <li
-                      key={p.id}
-                      className="border rounded px-3 py-2 hover:bg-slate-50 bg-white"
-                    >
-                      <Link href={`/players/${p.id}`} className="block">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <div className="font-medium">{p.name}</div>
-                            <div className="text-sm text-gray-600">
-                              DOB: {formatDateDDMMYYYY(p.dob)}
-                            </div>
-                            <div className="text-sm text-gray-600">
-                              Status: {p.active ? "Active" : "Inactive"}
-                            </div>
+                {players.map((p) => (
+                  <li
+                    key={p.id}
+                    className="border rounded px-3 py-2 hover:bg-slate-50"
+                  >
+                    <Link href={`/players/${p.id}`} className="block">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <div className="font-medium">{p.name}</div>
+                          <div className="text-sm text-gray-600">
+                            Status: {p.active ? "Active" : "Inactive"}
                           </div>
-                          {!p.active && (
-                            <span className="text-xs px-2 py-1 rounded bg-gray-200">
-                              Inactive
-                            </span>
-                          )}
                         </div>
-
-                        <div className="mt-1 text-xs text-gray-500">
-                          {stats.trainingSessions === 0 ? (
-                            <>No training sessions recorded yet.</>
-                          ) : (
-                            <>
-                              Training attended:{" "}
-                              <span className="font-semibold">
-                                {stats.trainingAttended} /{" "}
-                                {stats.trainingSessions}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </Link>
-                    </li>
-                  );
-                })}
+                      </div>
+                    </Link>
+                 </li>
+                ))}
               </ul>
             )}
           </section>
