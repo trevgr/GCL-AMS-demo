@@ -31,7 +31,7 @@ type AttendanceRow = {
   player_id: number;
   status: "present" | "absent";
   session: {
-    session_type: string;
+    id: number;
     team_id: number;
   } | null;
 };
@@ -44,6 +44,11 @@ function formatDateDDMMYYYY(iso: string) {
   return `${day}/${month}/${year}`;
 }
 
+function pct(n: number, d: number) {
+  if (d <= 0) return "0%";
+  return `${Math.round((n / d) * 100)}%`;
+}
+
 export default async function TeamDetail(props: {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ view?: string }>;
@@ -54,8 +59,8 @@ export default async function TeamDetail(props: {
   const { view } = await props.searchParams;
   const teamId = Number(id);
 
-  const activeTab: "players" | "sessions" =
-    view === "sessions" ? "sessions" : "players";
+  const activeTab: "players" | "sessions" | "attendance" =
+    view === "sessions" ? "sessions" : view === "attendance" ? "attendance" : "players";
 
   if (Number.isNaN(teamId)) {
     console.error("Invalid team id:", id);
@@ -123,71 +128,98 @@ export default async function TeamDetail(props: {
   }
 
   const typedSessions = (sessions ?? []) as Session[];
+  const totalTeamSessions = typedSessions.length;
 
-  // ---- Load attendance joined with sessions ----
+  // ---- Load attendance joined with sessions (filter to this team on the server) ----
+  // NOTE: This uses an inner join alias to avoid pulling attendance for other teams.
   const { data: attendanceRows, error: attendanceError } = await supabase
     .from("attendance")
     .select(
       `
       player_id,
       status,
-      session:sessions (
-        session_type,
+      session:sessions!inner (
+        id,
         team_id
       )
     `
-    );
+    )
+    .eq("session.team_id", teamId);
 
   if (attendanceError) {
-    console.error("Error loading attendance:", attendanceError);
+    console.error("Error loading attendance for team:", attendanceError);
   }
 
   const typedAttendance = (attendanceRows ?? []) as AttendanceRow[];
 
-  // Build per-player training attendance stats for THIS team
+  // Build per-player attendance stats for THIS team
   const attendanceByPlayer = new Map<
     number,
     {
-      trainingSessions: number;
-      trainingAttended: number;
+      present: number;
+      marked: number; // present + absent
     }
   >();
 
   for (const row of typedAttendance) {
     if (!row.session) continue;
     if (row.session.team_id !== teamId) continue;
-    if (row.session.session_type !== "training") continue;
 
     const entry =
       attendanceByPlayer.get(row.player_id) ?? {
-        trainingSessions: 0,
-        trainingAttended: 0,
+        present: 0,
+        marked: 0,
       };
 
-    entry.trainingSessions += 1;
-    if (row.status === "present") {
-      entry.trainingAttended += 1;
-    }
+    entry.marked += 1;
+    if (row.status === "present") entry.present += 1;
 
     attendanceByPlayer.set(row.player_id, entry);
   }
 
+  // Leaderboard rows
+  const leaderboard = players
+    .map((p) => {
+      const stats = attendanceByPlayer.get(p.id) ?? { present: 0, marked: 0 };
+      return {
+        playerId: p.id,
+        name: p.name,
+        active: p.active,
+        present: stats.present,
+        marked: stats.marked,
+        total: totalTeamSessions,
+        percent: totalTeamSessions > 0 ? stats.present / totalTeamSessions : 0,
+      };
+    })
+    .sort((a, b) => {
+      if (b.present !== a.present) return b.present - a.present;
+      if (b.marked !== a.marked) return b.marked - a.marked;
+      return a.name.localeCompare(b.name);
+    });
+
   return (
     <main className="min-h-screen space-y-4">
       {/* Team header */}
-      <section>
-        <h1 className="text-2xl font-bold mb-1">{team.name}</h1>
-        <p className="text-gray-600">
-          {team.age_group} · {team.season}
-        </p>
-        {!team.active && (
-          <p className="text-sm text-red-600 mt-1">Team marked inactive</p>
-        )}
+      <section className="space-y-2">
+        <div>
+          <h1 className="text-2xl font-bold mb-1">{team.name}</h1>
+          <p className="text-gray-600">
+            {team.age_group} · {team.season}
+          </p>
+          {!team.active && (
+            <p className="text-sm text-red-600 mt-1">Team marked inactive</p>
+          )}
+        </div>
+
+        {/* Add player */}
+        <div className="border rounded bg-white p-3">
+          <AddPlayerClient teamId={teamId} />
+        </div>
       </section>
 
       {/* Tabs */}
       <section>
-        <div className="flex gap-2 text-sm mb-3">
+        <div className="flex gap-2 text-sm mb-3 flex-wrap">
           <Link
             href={`/teams/${teamId}?view=players`}
             className={`px-3 py-1 rounded border ${
@@ -197,6 +229,16 @@ export default async function TeamDetail(props: {
             }`}
           >
             Players
+          </Link>
+          <Link
+            href={`/teams/${teamId}?view=attendance`}
+            className={`px-3 py-1 rounded border ${
+              activeTab === "attendance"
+                ? "bg-slate-900 text-white border-slate-900"
+                : "bg-white text-slate-800 border-slate-300"
+            }`}
+          >
+            Attendance leaderboard
           </Link>
           <Link
             href={`/teams/${teamId}?view=sessions`}
@@ -213,38 +255,124 @@ export default async function TeamDetail(props: {
         {/* Players tab */}
         {activeTab === "players" && (
           <section className="space-y-2">
-            <div className="flex items-center justify-between mb-1">
-              <h2 className="text-sm font-semibold text-gray-800">
-                Squad list
-              </h2>
-              <AddPlayerClient teamId={teamId} />
-            </div>
-
             {players.length === 0 ? (
-              <p className="text-sm text-gray-700">
-                No players assigned to this team yet. Use &quot;Add player&quot; to
-                create your first squad members.
-              </p>
+              <p>No players assigned to this team.</p>
             ) : (
-              <ul className="space-y-2">
-                {players.map((p) => (
-                  <li
-                    key={p.id}
-                    className="border rounded px-3 py-2 hover:bg-slate-50"
-                  >
-                    <Link href={`/players/${p.id}`} className="block">
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <div className="font-medium">{p.name}</div>
-                          <div className="text-sm text-gray-600">
-                            Status: {p.active ? "Active" : "Inactive"}
+              <>
+                <div className="text-xs text-gray-600">
+                  Team sessions: <span className="font-semibold">{totalTeamSessions}</span>
+                  {totalTeamSessions === 0 && (
+                    <span className="ml-2 text-gray-500">
+                      (Plan/import sessions to see meaningful attendance.)
+                    </span>
+                  )}
+                </div>
+
+                <ul className="space-y-2">
+                  {players.map((p) => {
+                    const stats = attendanceByPlayer.get(p.id) ?? {
+                      present: 0,
+                      marked: 0,
+                    };
+
+                    return (
+                      <li
+                        key={p.id}
+                        className="border rounded px-3 py-2 hover:bg-slate-50 bg-white"
+                      >
+                        <Link href={`/players/${p.id}`} className="block">
+                          <div className="flex justify-between items-start gap-2">
+                            <div>
+                              <div className="font-medium">{p.name}</div>
+                              <div className="text-sm text-gray-600">
+                                Status: {p.active ? "Active" : "Inactive"}
+                              </div>
+                            </div>
                           </div>
+
+                          {/* Attendance summary per player */}
+                          <div className="mt-2 text-xs text-gray-600">
+                            <span className="font-medium">Attendance:</span>{" "}
+                            <span className="font-semibold">
+                              {stats.present}
+                            </span>{" "}
+                            present ·{" "}
+                            <span className="font-semibold">{stats.marked}</span>{" "}
+                            marked ·{" "}
+                            <span className="font-semibold">{totalTeamSessions}</span>{" "}
+                            total sessions{" "}
+                            {totalTeamSessions > 0 && (
+                              <span className="ml-2 text-gray-500">
+                                ({pct(stats.present, totalTeamSessions)} present)
+                              </span>
+                            )}
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            )}
+          </section>
+        )}
+
+        {/* Attendance leaderboard tab */}
+        {activeTab === "attendance" && (
+          <section className="space-y-2">
+            {players.length === 0 ? (
+              <p>No players assigned to this team.</p>
+            ) : totalTeamSessions === 0 ? (
+              <p>No sessions for this team yet — plan/import sessions first.</p>
+            ) : (
+              <>
+                <div className="text-xs text-gray-600">
+                  Ranked by <span className="font-semibold">present</span> count.
+                  Total sessions for team:{" "}
+                  <span className="font-semibold">{totalTeamSessions}</span>
+                </div>
+
+                <ul className="space-y-2">
+                  {leaderboard.map((row, idx) => (
+                    <li
+                      key={row.playerId}
+                      className="border rounded px-3 py-2 bg-white flex justify-between items-center"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500 w-6">
+                            #{idx + 1}
+                          </span>
+                          <Link
+                            href={`/players/${row.playerId}`}
+                            className="font-medium hover:underline"
+                          >
+                            {row.name}
+                          </Link>
+                          {!row.active && (
+                            <span className="text-[0.65rem] px-2 py-0.5 rounded bg-gray-200 text-gray-800">
+                              Inactive
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          Marked: {row.marked} · Total sessions: {row.total}
                         </div>
                       </div>
-                    </Link>
-                 </li>
-                ))}
-              </ul>
+
+                      <div className="text-right">
+                        <div className="text-sm">
+                          <span className="font-semibold">{row.present}</span>{" "}
+                          present
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {pct(row.present, row.total)}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
           </section>
         )}
@@ -263,8 +391,7 @@ export default async function TeamDetail(props: {
                   >
                     <div>
                       <div className="font-medium">
-                        {formatDateDDMMYYYY(s.session_date)} ·{" "}
-                        {s.session_type}
+                        {formatDateDDMMYYYY(s.session_date)} · {s.session_type}
                       </div>
                       <div className="text-sm text-gray-600">
                         {s.theme ? `Theme: ${s.theme}` : ""}
