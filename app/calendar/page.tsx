@@ -1,6 +1,7 @@
 // app/calendar/page.tsx
 import Link from "next/link";
 import { createServerSupabaseClient } from "../../lib/supabaseServer";
+import { getCoachAccessForUser } from "../../lib/coachAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -77,14 +78,44 @@ function sessionTypeBadge(
 export default async function CalendarPage(props: {
   searchParams: Promise<{ view?: string }>;
 }) {
-  const supabase = await createServerSupabaseClient(); // ✅ server-side client
+  const supabase = await createServerSupabaseClient();
 
   const { view } = await props.searchParams;
   const activeTab: "upcoming" | "history" =
     view === "history" ? "history" : "upcoming";
 
-  // Load all sessions (you can later filter by team/coach if needed)
-  const { data: sessions, error: sessionsError } = await supabase
+  // ---- Auth user ----
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError) {
+    console.error("CalendarPage: error getting auth user:", userError);
+  }
+
+  // Same approach as TeamsPage:
+  // - if we can resolve access => enforce access.teamIds
+  // - if not => fall back to all sessions (but ideally AuthShell prevents unauth)
+  let teamIdsFilter: number[] | null = null;
+
+  if (user) {
+    const access = await getCoachAccessForUser(supabase as any, user.id);
+
+    if (!access) {
+      console.warn("CalendarPage: no coach access record found for user", user.id);
+      // keep null => fallback (or you can set [] to show none)
+      teamIdsFilter = [];
+    } else {
+      teamIdsFilter = access.teamIds; // directors/admins will be all teams
+    }
+  } else {
+    console.warn("CalendarPage: no Supabase user detected on server.");
+    teamIdsFilter = [];
+  }
+
+  // ---- Load sessions (filtered by allowed teams) ----
+  let sessionsQuery = supabase
     .from("sessions")
     .select(
       `
@@ -102,6 +133,41 @@ export default async function CalendarPage(props: {
     )
     .order("session_date", { ascending: true });
 
+  if (teamIdsFilter && teamIdsFilter.length > 0) {
+    sessionsQuery = sessionsQuery.in("team_id", teamIdsFilter);
+  } else if (Array.isArray(teamIdsFilter) && teamIdsFilter.length === 0) {
+    // Explicitly no access => don't query all sessions
+    return (
+      <main className="min-h-screen space-y-4">
+        <section className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold mb-2">Calendar</h1>
+            <p className="text-sm text-gray-600">
+              See upcoming sessions at a glance, or browse the full history by month.
+            </p>
+          </div>
+          <Link
+            href="/sessions/new"
+            className="text-xs sm:text-sm px-3 py-1.5 rounded bg-slate-900 text-white hover:bg-slate-800"
+          >
+            + Plan new session
+          </Link>
+        </section>
+
+        <p className="text-sm text-gray-700">
+          No sessions available for your account.
+          <br />
+          If you expect to see sessions, ensure your user is linked in{" "}
+          <span className="font-mono text-xs">coaches</span> and{" "}
+          <span className="font-mono text-xs">coach_team_assignments</span>{" "}
+          (or has director/admin role).
+        </p>
+      </main>
+    );
+  }
+
+  const { data: sessions, error: sessionsError } = await sessionsQuery;
+
   if (sessionsError) {
     console.error("Error loading calendar sessions:", sessionsError);
   }
@@ -116,10 +182,7 @@ export default async function CalendarPage(props: {
 
   // Group history by month/year
   type MonthKey = string; // "YYYY-MM"
-  const historyByMonth = new Map<
-    MonthKey,
-    { label: string; items: SessionRow[] }
-  >();
+  const historyByMonth = new Map<MonthKey, { label: string; items: SessionRow[] }>();
 
   for (const s of history) {
     const d = new Date(s.session_date);
@@ -148,8 +211,7 @@ export default async function CalendarPage(props: {
         <div>
           <h1 className="text-2xl font-bold mb-2">Calendar</h1>
           <p className="text-sm text-gray-600">
-            See upcoming sessions at a glance, or browse the full history by
-            month.
+            See upcoming sessions at a glance, or browse the full history by month.
           </p>
         </div>
         <Link
@@ -205,8 +267,7 @@ export default async function CalendarPage(props: {
                       <div>
                         <div className="flex items-center gap-2 text-sm">
                           <span className="font-medium">
-                            {weekdayShort(s.session_date)}{" "}
-                            {formatDateDDMMYYYY(s.session_date)}
+                            {weekdayShort(s.session_date)} {formatDateDDMMYYYY(s.session_date)}
                           </span>
                           <span
                             className={`text-[0.65rem] px-2 py-0.5 rounded-full border ${badge.className}`}
@@ -220,9 +281,7 @@ export default async function CalendarPage(props: {
                             : "Unknown team"}
                         </div>
                         {s.theme && (
-                          <div className="text-xs text-gray-500 mt-0.5">
-                            Theme: {s.theme}
-                          </div>
+                          <div className="text-xs text-gray-500 mt-0.5">Theme: {s.theme}</div>
                         )}
                       </div>
                       <div className="text-xs flex flex-col items-end gap-1">
@@ -251,9 +310,7 @@ export default async function CalendarPage(props: {
             ) : (
               sortedHistoryMonths.map(([key, group]) => (
                 <section key={key} className="space-y-2">
-                  <h2 className="text-sm font-semibold text-gray-700">
-                    {group.label}
-                  </h2>
+                  <h2 className="text-sm font-semibold text-gray-700">{group.label}</h2>
                   <ul className="space-y-2">
                     {group.items.map((s) => {
                       const badge = sessionTypeBadge(s.session_type);
@@ -265,8 +322,7 @@ export default async function CalendarPage(props: {
                           <div>
                             <div className="flex items-center gap-2 text-sm">
                               <span className="font-medium">
-                                {weekdayShort(s.session_date)}{" "}
-                                {formatDateDDMMYYYY(s.session_date)}
+                                {weekdayShort(s.session_date)} {formatDateDDMMYYYY(s.session_date)}
                               </span>
                               <span
                                 className={`text-[0.65rem] px-2 py-0.5 rounded-full border ${badge.className}`}
@@ -280,9 +336,7 @@ export default async function CalendarPage(props: {
                                 : "Unknown team"}
                             </div>
                             {s.theme && (
-                              <div className="text-xs text-gray-500 mt-0.5">
-                                Theme: {s.theme}
-                              </div>
+                              <div className="text-xs text-gray-500 mt-0.5">Theme: {s.theme}</div>
                             )}
                           </div>
                           <div className="text-xs flex flex-col items-end gap-1">

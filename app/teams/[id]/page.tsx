@@ -331,6 +331,12 @@ export default async function TeamDetail(props: {
                   Total sessions for team:{" "}
                   <span className="font-semibold">{totalTeamSessions}</span>
                 </div>
+                <a
+                  href={`/api/reports/team-attendance?team_id=${teamId}`}
+                  className="text-xs px-3 py-1 rounded border border-slate-400 bg-white hover:bg-slate-100 inline-flex"
+                >
+                  Download leaderboard CSV
+                </a>  
 
                 <ul className="space-y-2">
                   {leaderboard.map((row, idx) => (
