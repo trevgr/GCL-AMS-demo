@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { createServerSupabaseClient } from "../../lib/supabaseServer";
 import { getCoachAccessForUser } from "../../lib/coachAccess";
+import PlayerTrendsFiltersClient from "./PlayerTrendsFiltersClient";
 
 export const dynamic = "force-dynamic";
 
@@ -148,8 +149,9 @@ export default async function ReportsPage(props: {
   const sp = await props.searchParams;
   const { view, team_id, mode } = sp;
 
-  const activeTab: "sessions" | "development" =
-    view === "development" ? "development" : "sessions";
+  const activeTab: "sessions" | "development" |
+    "player-trends" =
+    view === "development" ? "development" : view === "player-trends" ? "player-trends" : "sessions";
 
   const sessionsMode: "recent" | "history" =
     mode === "history" ? "history" : "recent";
@@ -500,6 +502,16 @@ export default async function ReportsPage(props: {
             }`}
           >
             Development dashboard
+          </Link>
+          <Link
+            href="/reports?view=player-trends"
+            className={`px-3 py-1 rounded border ${
+              activeTab === "player-trends"
+                ? "bg-slate-900 text-white border-slate-900"
+                : "bg-white text-slate-800 border-slate-300"
+            }`}
+          >
+            Player trends
           </Link>
         </div>
 
@@ -909,7 +921,37 @@ export default async function ReportsPage(props: {
             )}
           </section>
         )}
+
+        {/* -------------------- PLAYER TRENDS TAB --------------------- */}
+        {activeTab === "player-trends" && (
+          <PlayerTrendsWrapper
+            teamId={devSelectedTeamId}
+            teamName={selectedTeam?.name ?? null}
+          />
+        )}
       </section>
     </main>
+  );
+}
+
+type PlayerTrendsFilters = {
+  startDate: string;
+  endDate: string;
+  theme: string | null;
+  teamId: number | null;
+};
+
+async function PlayerTrendsWrapper({
+  teamId,
+  teamName,
+}: {
+  teamId: number | null;
+  teamName: string | null;
+}) {
+  return (
+    <PlayerTrendsFiltersClient
+      teamId={teamId}
+      teamName={teamName}
+    />
   );
 }
