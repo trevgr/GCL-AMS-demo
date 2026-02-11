@@ -1,7 +1,7 @@
 // app/sessions/[id]/AttendanceClient.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../../lib/supabaseClient";
 
 type Status = "present" | "absent";
@@ -63,7 +63,6 @@ const categories: { key: CategoryKey; label: string }[] = [
   { key: "speed_agility", label: "Speed / Agility" },
 ];
 
-// 0–5 tick marks under the slider
 const ratingTicks = [0, 1, 2, 3, 4, 5];
 
 function formatDateDDMMYYYY(iso: string) {
@@ -78,7 +77,7 @@ function ratingColorClass(value: number) {
   if (value === 0) return "bg-gray-300 text-gray-800";
   if (value <= 2) return "bg-red-500 text-white";
   if (value === 3) return "bg-amber-400 text-slate-900";
-  return "bg-green-500 text-white"; // 4–5
+  return "bg-green-500 text-white";
 }
 
 function ratingLabel(value: number) {
@@ -102,6 +101,40 @@ type FeedbackState = {
   comments: string;
 };
 
+const emptyFeedback = (): FeedbackState => ({
+  ball_control: 0,
+  passing: 0,
+  shooting: 0,
+  fitness: 0,
+  attitude: 0,
+  coachability: 0,
+  positioning: 0,
+  speed_agility: 0,
+  comments: "",
+});
+
+function countRatedCategories(f: FeedbackState) {
+  let n = 0;
+  for (const { key } of categories) {
+    if ((f as any)[key] > 0) n++;
+  }
+  return n;
+}
+
+function avgRatedValue(f: FeedbackState) {
+  let sum = 0;
+  let cnt = 0;
+  for (const { key } of categories) {
+    const v = (f as any)[key] as number;
+    if (v > 0) {
+      sum += v;
+      cnt++;
+    }
+  }
+  if (!cnt) return null;
+  return Math.round((sum / cnt) * 100) / 100;
+}
+
 export default function AttendanceClient({
   sessionId,
   players,
@@ -109,42 +142,25 @@ export default function AttendanceClient({
   initialFeedback,
   coachCounts,
 }: Props) {
-  // Attendance state (local only until Save All)
-  const [attendance, setAttendance] = useState<
-    Record<number, Status | null>
-  >(() => {
+  // Attendance state
+  const [attendance, setAttendance] = useState<Record<number, Status | null>>(() => {
     const map: Record<number, Status | null> = {};
-    for (const p of players) {
-      map[p.id] = null;
-    }
-    for (const a of initialAttendance) {
-      map[a.player_id] = a.status;
-    }
+    for (const p of players) map[p.id] = null;
+    for (const a of initialAttendance) map[a.player_id] = a.status;
     return map;
   });
 
-  // Feedback state per player (0–5, default = 0 = not assessed)
-  const [feedback, setFeedback] = useState<
-    Record<number, FeedbackState>
-  >(() => {
+  // Feedback state per player
+  const [feedback, setFeedback] = useState<Record<number, FeedbackState>>(() => {
     const map: Record<number, FeedbackState> = {};
-    for (const p of players) {
-      map[p.id] = {
-        ball_control: 0,
-        passing: 0,
-        shooting: 0,
-        fitness: 0,
-        attitude: 0,
-        coachability: 0,
-        positioning: 0,
-        speed_agility: 0,
-        comments: "",
-      };
-    }
+    for (const p of players) map[p.id] = emptyFeedback();
     return map;
   });
 
-  // current coach info
+  // Which player is expanded for ratings
+  const [expandedPlayerId, setExpandedPlayerId] = useState<number | null>(null);
+
+  // Coach identity
   const [coachId, setCoachId] = useState<string | null>(null);
   const [coachLoading, setCoachLoading] = useState(true);
   const [coachError, setCoachError] = useState<string | null>(null);
@@ -173,27 +189,13 @@ export default function AttendanceClient({
         setCoachId(data.user.id);
         setCoachError(null);
 
-        // Hydrate this coach's previous ratings into the local state
         setFeedback((prev) => {
           const next: Record<number, FeedbackState> = { ...prev };
 
           for (const row of initialFeedback) {
             if (row.coach_id !== data.user.id) continue;
-            if (!next[row.player_id]) {
-              next[row.player_id] = {
-                ball_control: 0,
-                passing: 0,
-                shooting: 0,
-                fitness: 0,
-                attitude: 0,
-                coachability: 0,
-                positioning: 0,
-                speed_agility: 0,
-                comments: "",
-              };
-            }
             next[row.player_id] = {
-              ...next[row.player_id],
+              ...(next[row.player_id] ?? emptyFeedback()),
               ball_control: row.ball_control ?? 0,
               passing: row.passing ?? 0,
               shooting: row.shooting ?? 0,
@@ -214,33 +216,38 @@ export default function AttendanceClient({
         setCoachError("Problem loading coach identity.");
         setCoachId(null);
       } finally {
-        if (isMounted) {
-          setCoachLoading(false);
-        }
+        if (isMounted) setCoachLoading(false);
       }
     }
 
     loadCoachAndHydrate();
-
     return () => {
       isMounted = false;
     };
   }, [initialFeedback]);
 
-  // Just update local state (no DB write here)
+  const toggleRatings = (playerId: number) => {
+    setExpandedPlayerId((cur) => (cur === playerId ? null : playerId));
+  };
+
+  // Update local state (no DB write)
   const handleSetStatus = (playerId: number, status: Status) => {
     setError(null);
     setSavedAt(null);
+
     setAttendance((prev) => ({ ...prev, [playerId]: status }));
+
+    // If player becomes absent, close panel + clear ratings locally (prevents stale rating data)
+    if (status === "absent") {
+      setExpandedPlayerId((cur) => (cur === playerId ? null : cur));
+      setFeedback((prev) => ({ ...prev, [playerId]: emptyFeedback() }));
+    }
   };
 
-  const handleFeedbackChange = (
-    playerId: number,
-    key: CategoryKey,
-    value: number
-  ) => {
+  const handleFeedbackChange = (playerId: number, key: CategoryKey, value: number) => {
     setError(null);
     setSavedAt(null);
+
     setFeedback((prev) => ({
       ...prev,
       [playerId]: {
@@ -253,6 +260,7 @@ export default function AttendanceClient({
   const handleFeedbackComments = (playerId: number, value: string) => {
     setError(null);
     setSavedAt(null);
+
     setFeedback((prev) => ({
       ...prev,
       [playerId]: {
@@ -282,52 +290,50 @@ export default function AttendanceClient({
         setCoachId(data.user.id);
       }
 
-      // 1) Upsert attendance for ALL players in this session
+      // 1) Upsert attendance for ALL players
       const attendancePayload = players.map((p) => ({
         session_id: sessionId,
         player_id: p.id,
-        // Treat null as "absent" for consistency;
-        // if you want "leave unchanged", you could filter null out instead.
         status: attendance[p.id] ?? "absent",
       }));
 
       const { error: attendanceError } = await supabase
         .from("attendance")
-        .upsert(attendancePayload, {
-          onConflict: "session_id,player_id",
-        });
+        .upsert(attendancePayload, { onConflict: "session_id,player_id" });
 
       if (attendanceError) {
         console.error("Error saving attendance:", attendanceError);
         setError("Failed to save attendance. Please try again.");
-        setSavingAll(false);
         return;
       }
 
       // 2) Upsert feedback for ALL players for this coach & session
+      //    If absent, we send zeros/comments null (so absent players do not carry ratings).
       const feedbackPayload = players.map((p) => {
-        const f = feedback[p.id];
+        const status = attendance[p.id] ?? "absent";
+        const f = feedback[p.id] ?? emptyFeedback();
+
+        const use = status === "present" ? f : emptyFeedback();
+
         return {
           player_id: p.id,
           session_id: sessionId,
           coach_id: currentCoachId,
-          ball_control: f?.ball_control ?? 0,
-          passing: f?.passing ?? 0,
-          shooting: f?.shooting ?? 0,
-          fitness: f?.fitness ?? 0,
-          attitude: f?.attitude ?? 0,
-          coachability: f?.coachability ?? 0,
-          positioning: f?.positioning ?? 0,
-          speed_agility: f?.speed_agility ?? 0,
-          comments: f?.comments.trim() || null,
+          ball_control: use.ball_control ?? 0,
+          passing: use.passing ?? 0,
+          shooting: use.shooting ?? 0,
+          fitness: use.fitness ?? 0,
+          attitude: use.attitude ?? 0,
+          coachability: use.coachability ?? 0,
+          positioning: use.positioning ?? 0,
+          speed_agility: use.speed_agility ?? 0,
+          comments: status === "present" ? (use.comments.trim() || null) : null,
         };
       });
 
       const { error: feedbackError } = await supabase
         .from("coach_feedback")
-        .upsert(feedbackPayload, {
-          onConflict: "player_id,session_id,coach_id",
-        });
+        .upsert(feedbackPayload, { onConflict: "player_id,session_id,coach_id" });
 
       if (feedbackError) {
         console.error("Error saving feedback:", {
@@ -336,20 +342,27 @@ export default function AttendanceClient({
           hint: (feedbackError as any).hint,
         });
         setError("Failed to save ratings. Please try again.");
-        setSavingAll(false);
         return;
       }
 
       setSavedAt(new Date());
+      setExpandedPlayerId(null); // collapse everything after save (keeps UI tidy)
     } finally {
       setSavingAll(false);
     }
   };
 
+  const presentCount = useMemo(() => {
+    return players.reduce((sum, p) => sum + ((attendance[p.id] ?? "absent") === "present" ? 1 : 0), 0);
+  }, [players, attendance]);
+
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Attendance & Ratings</h2>
+        <span className="text-xs px-2 py-1 rounded border bg-gray-50">
+          Present: <span className="font-semibold">{presentCount}</span> / {players.length}
+        </span>
       </div>
 
       <p className="text-xs text-gray-600">
@@ -360,21 +373,11 @@ export default function AttendanceClient({
         <span className="font-semibold">4–5</span> = Strong.
       </p>
 
-      {coachLoading && (
-        <p className="text-xs text-gray-500">Checking coach identity…</p>
-      )}
-      {coachError && (
-        <p className="text-xs text-red-600">{coachError}</p>
-      )}
-      {error && (
-        <p className="text-sm text-red-600">
-          {error}
-        </p>
-      )}
+      {coachLoading && <p className="text-xs text-gray-500">Checking coach identity…</p>}
+      {coachError && <p className="text-xs text-red-600">{coachError}</p>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
       {savedAt && !error && (
-        <p className="text-xs text-green-700">
-          Saved at {savedAt.toLocaleTimeString()}
-        </p>
+        <p className="text-xs text-green-700">Saved at {savedAt.toLocaleTimeString()}</p>
       )}
 
       {players.length === 0 ? (
@@ -384,39 +387,52 @@ export default function AttendanceClient({
           <ul className="space-y-3">
             {players.map((p) => {
               const status = attendance[p.id] ?? null;
-              const f = feedback[p.id];
+              const isPresent = status === "present";
+              const isOpen = expandedPlayerId === p.id;
+
+              const f = feedback[p.id] ?? emptyFeedback();
+              const ratedCats = countRatedCategories(f);
+              const avg = avgRatedValue(f);
 
               return (
-                <li
-                  key={p.id}
-                  className="border rounded px-3 py-2 bg-white"
-                >
+                <li key={p.id} className="border rounded px-3 py-2 bg-white">
                   {/* Header: player info + attendance controls */}
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="font-medium">{p.name}</div>
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{p.name}</div>
                       <div className="text-sm text-gray-600">
                         DOB: {formatDateDDMMYYYY(p.dob)}
                       </div>
+
                       {coachCounts[p.id] && coachCounts[p.id] > 0 && (
                         <div className="text-xs text-gray-500 mt-1">
-                          Rated by {coachCounts[p.id]} coach
-                          {coachCounts[p.id] > 1 ? "es" : ""}
+                          Rated by {coachCounts[p.id]} coach{coachCounts[p.id] > 1 ? "es" : ""}
                         </div>
                       )}
-                      {!p.active && (
-                        <div className="text-xs text-red-600">
-                          Inactive
+
+                      {!p.active && <div className="text-xs text-red-600">Inactive</div>}
+
+                      {/* Collapsed summary */}
+                      {!isOpen && (
+                        <div className="mt-2 text-xs text-gray-700">
+                          <span className="px-2 py-0.5 rounded bg-gray-100 border">
+                            Rated: <span className="font-semibold">{ratedCats}</span>/8
+                            {avg !== null ? (
+                              <>
+                                {" "}
+                                • Avg: <span className="font-semibold">{avg.toFixed(2).replace(/\.00$/, "")}</span>
+                              </>
+                            ) : null}
+                          </span>
                         </div>
                       )}
                     </div>
-                    <div className="flex flex-col items-end gap-1 text-sm">
+
+                    <div className="flex flex-col items-end gap-2 text-sm shrink-0">
                       <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() =>
-                            handleSetStatus(p.id, "present")
-                          }
+                          onClick={() => handleSetStatus(p.id, "present")}
                           className={`px-3 py-1 rounded border text-xs ${
                             status === "present"
                               ? "bg-green-500 text-white border-green-500"
@@ -427,9 +443,7 @@ export default function AttendanceClient({
                         </button>
                         <button
                           type="button"
-                          onClick={() =>
-                            handleSetStatus(p.id, "absent")
-                          }
+                          onClick={() => handleSetStatus(p.id, "absent")}
                           className={`px-3 py-1 rounded border text-xs ${
                             status === "absent"
                               ? "bg-red-500 text-white border-red-500"
@@ -439,33 +453,50 @@ export default function AttendanceClient({
                           Absent
                         </button>
                       </div>
+
+                      {/* Open/Close rating */}
+                      <button
+                        type="button"
+                        onClick={() => toggleRatings(p.id)}
+                        disabled={!isPresent}
+                        className={`px-3 py-1 rounded border text-xs font-medium ${
+                          !isPresent
+                            ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
+                            : isOpen
+                            ? "bg-slate-900 text-white border-slate-900"
+                            : "bg-white text-slate-900 border-slate-300"
+                        }`}
+                        title={!isPresent ? "Mark Present to rate" : ""}
+                      >
+                        {isOpen ? "Close rating" : "Open rating"}
+                      </button>
                     </div>
                   </div>
 
-                  {/* Ratings section */}
-                  {f && (
-                    <div className="mt-3 border-t pt-2 text-sm">
+                  {/* Ratings section (collapsible) */}
+                  {isOpen && (
+                    <div className="mt-3 border-t pt-3 text-sm bg-gray-50 rounded">
+                      {!isPresent && (
+                        <div className="text-xs text-gray-600 mb-2">
+                          Player must be marked <span className="font-semibold">Present</span> to rate.
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                         {categories.map((cat) => {
                           const value = f[cat.key];
 
                           return (
-                            <div
-                              key={cat.key}
-                              className="flex flex-col gap-1"
-                            >
+                            <div key={cat.key} className="flex flex-col gap-1">
                               <div className="flex items-center justify-between text-xs">
                                 <span>{cat.label}</span>
                                 <span
-                                  className={`px-2 py-0.5 rounded text-[0.65rem] ${ratingColorClass(
-                                    value
-                                  )}`}
+                                  className={`px-2 py-0.5 rounded text-[0.65rem] ${ratingColorClass(value)}`}
                                 >
                                   {ratingLabel(value)}
                                 </span>
                               </div>
 
-                              {/* Slider + clickable tick marks */}
                               <div className="flex flex-col gap-1">
                                 <input
                                   type="range"
@@ -473,15 +504,13 @@ export default function AttendanceClient({
                                   max={5}
                                   step={1}
                                   value={value}
+                                  disabled={!isPresent}
                                   onChange={(e) =>
-                                    handleFeedbackChange(
-                                      p.id,
-                                      cat.key,
-                                      Number(e.target.value)
-                                    )
+                                    handleFeedbackChange(p.id, cat.key, Number(e.target.value))
                                   }
                                   className="w-full"
                                 />
+
                                 <div className="flex justify-between text-[0.65rem] text-gray-500">
                                   {ratingTicks.map((tick) => {
                                     const isActive = value === tick;
@@ -489,15 +518,12 @@ export default function AttendanceClient({
                                       <button
                                         key={tick}
                                         type="button"
-                                        onClick={() =>
-                                          handleFeedbackChange(
-                                            p.id,
-                                            cat.key,
-                                            tick
-                                          )
-                                        }
+                                        disabled={!isPresent}
+                                        onClick={() => handleFeedbackChange(p.id, cat.key, tick)}
                                         className={`min-w-[1.25rem] text-center ${
-                                          isActive
+                                          !isPresent
+                                            ? "text-gray-300 cursor-not-allowed"
+                                            : isActive
                                             ? "font-semibold text-slate-900"
                                             : "text-gray-400"
                                         }`}
@@ -519,16 +545,22 @@ export default function AttendanceClient({
                           <textarea
                             rows={2}
                             value={f.comments}
-                            onChange={(e) =>
-                              handleFeedbackComments(
-                                p.id,
-                                e.target.value
-                              )
-                            }
+                            disabled={!isPresent}
+                            onChange={(e) => handleFeedbackComments(p.id, e.target.value)}
                             className="border rounded px-2 py-1 w-full"
                             placeholder="Notes specific to this session…"
                           />
                         </label>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedPlayerId(null)}
+                          className="px-3 py-1 rounded border text-xs bg-white"
+                        >
+                          Close
+                        </button>
                       </div>
                     </div>
                   )}
@@ -547,6 +579,10 @@ export default function AttendanceClient({
             >
               {savingAll ? "Saving…" : "Save attendance & ratings"}
             </button>
+
+            <p className="text-[0.7rem] text-gray-500">
+              Tip: mark a player absent to automatically clear their ratings for this coach in this session.
+            </p>
           </div>
         </>
       )}
